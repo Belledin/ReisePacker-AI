@@ -21,6 +21,7 @@ export interface Item {
 }
 
 import { WeatherTriggers } from '../services/WeatherService';
+import { getItemsForActivities } from './activityCatalog';
 
 export interface PackingRequest {
     destination: string;
@@ -112,15 +113,15 @@ export class PackingEngine {
             items.push({ id: 'thermals', name: 'Thermal Underwear', weight: 300, category: 'clothing', tags: ['cold'], quantity: 1 });
         }
 
-        // Activity Logic
-        if (activities.includes('hiking')) {
-            items.push({ id: 'hiking_boots', name: 'Hiking Boots', weight: 1200, category: 'clothing', tags: ['hiking'], quantity: 1 });
-        }
-        if (activities.includes('ski')) {
-            items.push({ id: 'ski_gear', name: 'Ski Gear', weight: 5000, category: 'misc', tags: ['ski'], quantity: 1 });
-        }
-        if (activities.includes('beach')) {
-            items.push({ id: 'swimsuit', name: 'Swimsuit', weight: 150, category: 'clothing', tags: ['beach'], quantity: 1 });
+        // Activity Logic from Activity Catalog (Phase 5 Extension)
+        if (activities && activities.length > 0) {
+            const activityItems = getItemsForActivities(activities);
+            activityItems.forEach(actItem => {
+                // Prevent duplicate item IDs
+                if (!items.some(i => i.id === actItem.id)) {
+                    items.push(actItem);
+                }
+            });
         }
 
         // Shared Items (Definitions)

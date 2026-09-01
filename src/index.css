@@ -508,3 +508,72 @@ button.secondary:hover {
   font-size: 0.9rem;
   margin: 0.5rem 0;
 }
+
+/* Activities Selector */
+.activities-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.activity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.25rem;
+}
+
+.activity-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  background: #282832;
+  border: 1px solid #3b3b4f;
+  border-radius: 8px;
+  color: #d1d5db;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.activity-chip:hover {
+  background: #323242;
+  border-color: #6366f1;
+  transform: translateY(-1px);
+}
+
+.activity-chip.active {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: #6366f1;
+  color: #f3f4f6;
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+}
+
+.activity-chip-emoji {
+  font-size: 1.15rem;
+}
+
+.activity-chip-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-chip-check {
+  font-size: 0.8rem;
+  color: #818cf8;
+  font-weight: bold;
+}
+
+.activity-indicator {
+  display: inline-block;
+  margin-left: 0.35rem;
+  font-size: 0.85rem;
+  vertical-align: middle;
+}
+

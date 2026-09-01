@@ -140,4 +140,106 @@ describe('PackingEngine', () => {
         expect(a2Shared.length).toBeGreaterThan(0);
     });
 
+    describe('Activity Catalog & Multi-Activity Packing', () => {
+        test('should generate items for various activities (beach, ski, business, cycling, camping, fitness)', () => {
+            const request: PackingRequest = {
+                destination: 'Alps & Sea',
+                days: 5,
+                people: [createPerson('Traveler', 'ADULT')],
+                activities: ['beach', 'ski', 'business', 'cycling', 'camping', 'fitness'],
+                transportLimit: 50000,
+                mode: 'SHARED'
+            };
+
+            const { people } = engine.generateList(request);
+            const inventory = people[0].inventory;
+
+            // Personal activity clothing & misc items
+            expect(inventory.some(i => i.id === 'swimsuit')).toBe(true);
+            expect(inventory.some(i => i.id === 'ski_jacket')).toBe(true);
+            expect(inventory.some(i => i.id === 'dress_shirt')).toBe(true);
+            expect(inventory.some(i => i.id === 'cycling_jersey')).toBe(true);
+            expect(inventory.some(i => i.id === 'sleeping_bag')).toBe(true);
+            expect(inventory.some(i => i.id === 'sport_outfit')).toBe(true);
+        });
+
+        test('should deduplicate items across overlapping activities (e.g. daypack in hiking & sightseeing)', () => {
+            const request: PackingRequest = {
+                destination: 'Munich',
+                days: 4,
+                people: [createPerson('Hiker', 'ADULT')],
+                activities: ['hiking', 'sightseeing'],
+                transportLimit: 23000,
+                mode: 'SHARED'
+            };
+
+            const { people } = engine.generateList(request);
+            const daypackItems = people[0].inventory.filter(i => i.id === 'daypack');
+
+            // Should be deduplicated to exactly 1 item
+            expect(daypackItems.length).toBe(1);
+        });
+
+        test('should scale clothing items from activities according to person type (Child 0.6, Toddler 0.3)', () => {
+            const adult = createPerson('Adult', 'ADULT');
+            const child = createPerson('Child', 'CHILD');
+            const toddler = createPerson('Toddler', 'TODDLER');
+
+            const request: PackingRequest = {
+                destination: 'Beach Resort',
+                days: 3,
+                people: [adult, child, toddler],
+                activities: ['beach'],
+                transportLimit: 23000,
+                mode: 'SHARED'
+            };
+
+            const { people } = engine.generateList(request);
+
+            const adultSwimsuit = people.find(p => p.id === 'Adult')!.inventory.find(i => i.id === 'swimsuit')!;
+            const childSwimsuit = people.find(p => p.id === 'Child')!.inventory.find(i => i.id === 'swimsuit')!;
+            const toddlerSwimsuit = people.find(p => p.id === 'Toddler')!.inventory.find(i => i.id === 'swimsuit')!;
+
+            expect(adultSwimsuit.weight).toBe(150);
+            expect(childSwimsuit.weight).toBe(Math.round(150 * 0.6)); // 90g
+            expect(toddlerSwimsuit.weight).toBe(Math.round(150 * 0.3)); // 45g
+        });
+
+        test('should distribute activity shared items into Community Box in Independent Mode', () => {
+            const p1 = createPerson('Alice', 'ADULT');
+            const p2 = createPerson('Bob', 'ADULT');
+
+            const request: PackingRequest = {
+                destination: 'Wild Camping',
+                days: 3,
+                people: [p1, p2],
+                activities: ['camping', 'hiking'],
+                transportLimit: 23000,
+                mode: 'INDEPENDENT'
+            };
+
+            const { communityBox } = engine.generateList(request);
+
+            // Activity shared items in Community Box
+            expect(communityBox.some(i => i.id.startsWith('camping_stove'))).toBe(true);
+            expect(communityBox.some(i => i.id.startsWith('mosquito_spray'))).toBe(true);
+            expect(communityBox.some(i => i.id.startsWith('first_aid_hiking'))).toBe(true);
+        });
+
+        test('should handle unknown or empty activities gracefully', () => {
+            const request: PackingRequest = {
+                destination: 'Nowhere',
+                days: 2,
+                people: [createPerson('Solo', 'ADULT')],
+                activities: ['unknown_activity', 'another_invalid' as any],
+                transportLimit: 23000,
+                mode: 'SHARED'
+            };
+
+            const { people } = engine.generateList(request);
+            // Should still have base items
+            expect(people[0].inventory.some(i => i.id === 'underwear')).toBe(true);
+            expect(people[0].inventory.some(i => i.id === 'tshirt')).toBe(true);
+        });
+    });
 });

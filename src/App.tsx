@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { PackingEngine, PackingRequest, Person, Item } from './logic/PackingEngine';
 import { WeatherService } from './services/WeatherService';
 import { ChecklistManager } from './logic/ChecklistManager';
+import { ACTIVITY_CATALOG, ActivityType } from './logic/activityCatalog';
 
 // Simple unique ID generator
 const generateId = () => Math.random().toString(36).substring(2, 9);
@@ -12,6 +13,7 @@ function App() {
     const [destination, setDestination] = useState('');
     const [days, setDays] = useState(3);
     const [people, setPeople] = useState<Person[]>([]);
+    const [activities, setActivities] = useState<string[]>([]);
     const [maxWeight, setMaxWeight] = useState(23000);
     const [mode, setMode] = useState<'SHARED' | 'INDEPENDENT'>('SHARED');
 
@@ -41,10 +43,17 @@ function App() {
         setPeople(people.map(p => p.id === id ? { ...p, [field]: value } : p));
     };
 
+    const toggleActivity = (actId: string) => {
+        setActivities(prev =>
+            prev.includes(actId) ? prev.filter(id => id !== actId) : [...prev, actId]
+        );
+    };
+
     const loadTestData = () => {
         setDestination('Reykjavik');
         setDays(7);
         setDate('2025-12-01');
+        setActivities(['hiking', 'sightseeing']);
 
         setPeople([
             { id: generateId(), name: 'Dad', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000 },
@@ -62,6 +71,7 @@ function App() {
             destination,
             days,
             people,
+            activities,
             maxWeight,
             mode,
             date
@@ -91,7 +101,7 @@ function App() {
                 destination,
                 days,
                 people: peopleClone,
-                activities: [],
+                activities,
                 weatherTriggers: triggers,
                 transportLimit: maxWeight,
                 mode
@@ -102,7 +112,7 @@ function App() {
             setLastRequest(currentRequestStr);
 
             // Initialize ChecklistManager with deterministic trip ID
-            const tripId = `${destination.toLowerCase().replace(/\s+/g, '_')}_${date}_${days}`;
+            const tripId = `${destination.toLowerCase().replace(/\s+/g, '_')}_${date}_${days}_${activities.slice().sort().join('-')}`;
             const manager = new ChecklistManager(tripId);
             manager.load();
             setChecklistManager(manager);
@@ -200,6 +210,14 @@ function App() {
         return true;
     };
 
+    const getActivityBadge = (tags: string[]) => {
+        if (!tags || !tags.includes('activity')) return null;
+        const actTag = tags.find(t => t !== 'activity' && t !== 'base' && t !== 'rain' && t !== 'cold');
+        if (!actTag) return null;
+        const def = ACTIVITY_CATALOG[actTag as ActivityType];
+        return def ? <span className="activity-indicator" title={def.name}>{def.emoji}</span> : null;
+    };
+
     return (
         <div className="app-container">
             <header className="app-header">
@@ -257,6 +275,31 @@ function App() {
                     </div>
                 </div>
 
+                {/* Activity Selector */}
+                <div className="form-group">
+                    <div className="activities-header">
+                        <label>Geplante Aktivitäten ({activities.length} gewählt)</label>
+                    </div>
+                    <div className="activity-grid">
+                        {Object.values(ACTIVITY_CATALOG).map(act => {
+                            const isSelected = activities.includes(act.id);
+                            return (
+                                <button
+                                    key={act.id}
+                                    type="button"
+                                    className={`activity-chip ${isSelected ? 'active' : ''}`}
+                                    onClick={() => toggleActivity(act.id)}
+                                    title={act.description}
+                                >
+                                    <span className="activity-chip-emoji">{act.emoji}</span>
+                                    <span className="activity-chip-name">{act.name}</span>
+                                    {isSelected && <span className="activity-chip-check">✓</span>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
                 <div className="form-group">
                     <div className="travelers-header">
                         <h3>Reisende ({people.length})</h3>
@@ -308,7 +351,7 @@ function App() {
                             <div>
                                 <h2>📋 Interaktive Packliste</h2>
                                 <p className="dashboard-meta">
-                                    {destination} • {days} Tage • {people.length} Personen
+                                    {destination} • {days} Tage • {people.length} Personen {activities.length > 0 && `• ${activities.length} Aktivitäten`}
                                 </p>
                             </div>
                             <div className="progress-badge">
@@ -389,6 +432,7 @@ function App() {
                                     ) : (
                                         visibleItems.map(item => {
                                             const packed = isItemPacked(p.id, item.id);
+                                            const badge = getActivityBadge(item.tags);
                                             return (
                                                 <div
                                                     key={item.id}
@@ -400,7 +444,9 @@ function App() {
                                                 >
                                                     <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
                                                     <span className="item-details">
-                                                        <span className="item-name">{item.quantity}x {item.name}</span>
+                                                        <span className="item-name">
+                                                            {item.quantity}x {item.name} {badge}
+                                                        </span>
                                                         <span className="item-weight">{item.weight}g</span>
                                                     </span>
                                                 </div>
@@ -436,6 +482,7 @@ function App() {
                                 ) : (
                                     result.communityBox.filter(item => filterItem('community', item.id)).map(item => {
                                         const packed = isItemPacked('community', item.id);
+                                        const badge = getActivityBadge(item.tags);
                                         return (
                                             <div
                                                 key={item.id}
@@ -447,7 +494,9 @@ function App() {
                                             >
                                                 <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
                                                 <span className="item-details">
-                                                    <span className="item-name">{item.quantity}x {item.name}</span>
+                                                    <span className="item-name">
+                                                        {item.quantity}x {item.name} {badge}
+                                                    </span>
                                                     <span className="item-weight">{item.weight}g</span>
                                                 </span>
                                             </div>
