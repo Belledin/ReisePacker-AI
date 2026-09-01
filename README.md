@@ -44,7 +44,7 @@ ReisePacker-AI ist eine moderne Webanwendung, die den Packprozess vor Reisen aut
 | Bereich | Technologie |
 |---|---|
 | **Frontend** | [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Vite](https://vitejs.dev/) |
-| **Backend & DB** | [Supabase](https://supabase.com/) (@supabase/supabase-js) |
+| **Backend & DB** | [Supabase](https://supabase.com/) (`@supabase/supabase-js`) |
 | **Testing** | [Jest](https://jestjs.io/) & [ts-jest](https://kulshekhar.github.io/ts-jest/) |
 | **Styling** | Modernes Responsive Dark-Theme (CSS) |
 
@@ -52,7 +52,7 @@ ReisePacker-AI ist eine moderne Webanwendung, die den Packprozess vor Reisen aut
 
 ## 📁 Projektstruktur
 
-`
+```
 ReisePacker-AI/
 ├── PRD.md                       # Produktanforderungen & Spezifikationen
 ├── knowledge_base.md            # Referenzdaten (Gewichtstabellen, Limits)
@@ -71,7 +71,7 @@ ReisePacker-AI/
     │   └── DashboardService.ts  # Dashboard- & Statistik-Auswertungen
     └── services/
         └── WeatherService.ts    # Wetterdienst-Integration (APIs & Mocks)
-`
+```
 
 ---
 
@@ -79,46 +79,45 @@ ReisePacker-AI/
 
 ### Voraussetzungen
 - [Node.js](https://nodejs.org/) (Version 18 oder höher)
-- 
-pm oder yarn
+- `npm` oder `yarn`
 
 ### 1. Repository klonen
-`ash
+```bash
 git clone https://github.com/Belledin/ReisePacker-AI.git
 cd ReisePacker-AI
-`
+```
 
 ### 2. Abhängigkeiten installieren
-`ash
+```bash
 npm install
-`
+```
 
 ### 3. Umgebungsvariablen einrichten (Optional)
-Erstelle eine .env-Datei im Root-Verzeichnis:
-`nv
+Erstelle eine `.env`-Datei im Root-Verzeichnis:
+```env
 # Wetterdienst (OpenWeatherMap API)
 VITE_OPENWEATHER_API_KEY=dein_api_key
 
 # Supabase Konfiguration
 VITE_SUPABASE_URL=deine_supabase_url
 VITE_SUPABASE_KEY=dein_supabase_anon_key
-`
+```
 > *Hinweis:* Die App enthält integrierte Fallbacks und Testdaten, sodass sie auch ohne API-Keys direkt lauffähig ist.
 
 ### 4. Entwicklungsserver starten
-`ash
+```bash
 npm run dev
-`
-Die App ist anschließend unter **http://localhost:5173/** erreichbar.
+```
+Die App ist anschließend unter **`http://localhost:5173/`** erreichbar.
 
 ---
 
 ## 🧪 Tests ausführen
 
 Die Unit-Tests für Packing-Engine, Wetterdienst, Historisierung und Checklist-Manager ausführen:
-`ash
+```bash
 npm test
-`
+```
 
 ---
 
