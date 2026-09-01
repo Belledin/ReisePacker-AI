@@ -1,0 +1,466 @@
+import React, { useState, useMemo } from 'react';
+import { PackingEngine, PackingRequest, Person, Item } from './logic/PackingEngine';
+import { WeatherService } from './services/WeatherService';
+import { ChecklistManager } from './logic/ChecklistManager';
+
+// Simple unique ID generator
+const generateId = () => Math.random().toString(36).substring(2, 9);
+
+type FilterMode = 'ALL' | 'PENDING' | 'PACKED';
+
+function App() {
+    const [destination, setDestination] = useState('');
+    const [days, setDays] = useState(3);
+    const [people, setPeople] = useState<Person[]>([]);
+    const [maxWeight, setMaxWeight] = useState(23000);
+    const [mode, setMode] = useState<'SHARED' | 'INDEPENDENT'>('SHARED');
+
+    const [result, setResult] = useState<{ people: Person[]; communityBox: Item[] } | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [lastRequest, setLastRequest] = useState<string | null>(null);
+    const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
+
+    // Checklist state & filters
+    const [checklistManager, setChecklistManager] = useState<ChecklistManager | null>(null);
+    const [packedVersion, setPackedVersion] = useState<number>(0);
+    const [filter, setFilter] = useState<FilterMode>('ALL');
+
+    const addPerson = () => {
+        const newPerson: Person = {
+            id: generateId(),
+            name: `Person ${people.length + 1}`,
+            type: 'ADULT',
+            inventory: [],
+            currentLoad: 0,
+            maxLoad: maxWeight
+        };
+        setPeople([...people, newPerson]);
+    };
+
+    const updatePerson = (id: string, field: keyof Person, value: any) => {
+        setPeople(people.map(p => p.id === id ? { ...p, [field]: value } : p));
+    };
+
+    const loadTestData = () => {
+        setDestination('Reykjavik');
+        setDays(7);
+        setDate('2025-12-01');
+
+        setPeople([
+            { id: generateId(), name: 'Dad', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000 },
+            { id: generateId(), name: 'Mom', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000 },
+            { id: generateId(), name: 'Teen 1', type: 'TEEN', inventory: [], currentLoad: 0, maxLoad: 23000 },
+            { id: generateId(), name: 'Kid 1', type: 'CHILD', inventory: [], currentLoad: 0, maxLoad: 15000 }
+        ]);
+    };
+
+    const handlePlan = async () => {
+        const engine = new PackingEngine();
+        const weatherService = new WeatherService();
+
+        const currentInputs = {
+            destination,
+            days,
+            people,
+            maxWeight,
+            mode,
+            date
+        };
+
+        const currentRequestStr = JSON.stringify(currentInputs);
+
+        if (lastRequest === currentRequestStr && result) {
+            console.log("Inputs unchanged, skipping plan generation.");
+            return;
+        }
+
+        setLoading(true);
+
+        try {
+            // Fetch weather triggers
+            const tripDate = new Date(date);
+            const triggers = await weatherService.getWeatherTriggers(destination, tripDate);
+
+            // CLONE people to avoid mutating state directly in PackingEngine
+            const peopleClone = people.map(p => ({
+                ...p,
+                inventory: [...p.inventory]
+            }));
+
+            const request: PackingRequest = {
+                destination,
+                days,
+                people: peopleClone,
+                activities: [],
+                weatherTriggers: triggers,
+                transportLimit: maxWeight,
+                mode
+            };
+
+            const res = engine.generateList(request);
+            setResult(res);
+            setLastRequest(currentRequestStr);
+
+            // Initialize ChecklistManager with deterministic trip ID
+            const tripId = `${destination.toLowerCase().replace(/\s+/g, '_')}_${date}_${days}`;
+            const manager = new ChecklistManager(tripId);
+            manager.load();
+            setChecklistManager(manager);
+            setPackedVersion(v => v + 1);
+        } catch (error) {
+            console.error("Error generating packing plan:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Helper to generate a unique key per person/item or community item
+    const getItemKey = (ownerId: string, itemId: string) => `${ownerId}___${itemId}`;
+
+    const isItemPacked = (ownerId: string, itemId: string): boolean => {
+        if (!checklistManager) return false;
+        return checklistManager.isPacked(getItemKey(ownerId, itemId));
+    };
+
+    const toggleItem = (ownerId: string, itemId: string) => {
+        if (!checklistManager) return;
+        checklistManager.toggleItem(getItemKey(ownerId, itemId));
+        setPackedVersion(v => v + 1);
+    };
+
+    // Progress calculations
+    const stats = useMemo(() => {
+        if (!result || !checklistManager) {
+            return { total: 0, packed: 0, percent: 0, personStats: {}, community: { total: 0, packed: 0, percent: 0 } };
+        }
+
+        let total = 0;
+        let packed = 0;
+        const personStats: Record<string, { total: number; packed: number; percent: number }> = {};
+
+        result.people.forEach(p => {
+            let pTotal = p.inventory.length;
+            let pPacked = 0;
+            p.inventory.forEach(item => {
+                const key = getItemKey(p.id, item.id);
+                if (checklistManager.isPacked(key)) {
+                    pPacked++;
+                }
+            });
+            total += pTotal;
+            packed += pPacked;
+            personStats[p.id] = {
+                total: pTotal,
+                packed: pPacked,
+                percent: pTotal > 0 ? Math.round((pPacked / pTotal) * 100) : 0
+            };
+        });
+
+        let cTotal = result.communityBox.length;
+        let cPacked = 0;
+        result.communityBox.forEach(item => {
+            const key = getItemKey('community', item.id);
+            if (checklistManager.isPacked(key)) {
+                cPacked++;
+            }
+        });
+        total += cTotal;
+        packed += cPacked;
+
+        return {
+            total,
+            packed,
+            percent: total > 0 ? Math.round((packed / total) * 100) : 0,
+            personStats,
+            community: {
+                total: cTotal,
+                packed: cPacked,
+                percent: cTotal > 0 ? Math.round((cPacked / cTotal) * 100) : 0
+            }
+        };
+    }, [result, checklistManager, packedVersion]);
+
+    const markAll = (isPacked: boolean) => {
+        if (!result || !checklistManager) return;
+        result.people.forEach(p => {
+            p.inventory.forEach(item => {
+                checklistManager.setItemState(getItemKey(p.id, item.id), isPacked);
+            });
+        });
+        result.communityBox.forEach(item => {
+            checklistManager.setItemState(getItemKey('community', item.id), isPacked);
+        });
+        setPackedVersion(v => v + 1);
+    };
+
+    const filterItem = (ownerId: string, itemId: string) => {
+        const packed = isItemPacked(ownerId, itemId);
+        if (filter === 'PENDING') return !packed;
+        if (filter === 'PACKED') return packed;
+        return true;
+    };
+
+    return (
+        <div className="app-container">
+            <header className="app-header">
+                <h1>ReisePacker AI 🧳</h1>
+                <p className="subtitle">Smarte Packlisten mit Wetter- & Gewichtsanalyse</p>
+            </header>
+
+            <div className="wizard-container">
+                <h2>Reise konfigurieren</h2>
+
+                <div className="form-group">
+                    <label>Reiseziel</label>
+                    <input
+                        value={destination}
+                        onChange={(e) => setDestination(e.target.value)}
+                        placeholder="z. B. Reykjavik, Paris, Rom"
+                    />
+                </div>
+
+                <div className="form-row">
+                    <div className="form-group flex-1">
+                        <label>Reisedatum</label>
+                        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                    </div>
+
+                    <div className="form-group flex-1">
+                        <label>Dauer (Tage)</label>
+                        <input
+                            type="number"
+                            min="1"
+                            max="60"
+                            value={days}
+                            onChange={(e) => setDays(Math.max(1, Number(e.target.value)))}
+                        />
+                    </div>
+                </div>
+
+                <div className="form-group">
+                    <label>Pack-Modus</label>
+                    <div className="mode-toggle">
+                        <button
+                            type="button"
+                            className={`toggle-btn ${mode === 'SHARED' ? 'active' : 'secondary'}`}
+                            onClick={() => setMode('SHARED')}
+                        >
+                            👨‍👩‍👧‍👦 Shared Mode (Gemeinschaftsbox)
+                        </button>
+                        <button
+                            type="button"
+                            className={`toggle-btn ${mode === 'INDEPENDENT' ? 'active' : 'secondary'}`}
+                            onClick={() => setMode('INDEPENDENT')}
+                        >
+                            🎒 Individual Mode
+                        </button>
+                    </div>
+                </div>
+
+                <div className="form-group">
+                    <div className="travelers-header">
+                        <h3>Reisende ({people.length})</h3>
+                        <button className="secondary small-btn" onClick={addPerson}>+ Person hinzufügen</button>
+                    </div>
+
+                    {people.length === 0 && (
+                        <p className="hint-text">Füge Reisende hinzu oder lade Beispieldaten.</p>
+                    )}
+
+                    {people.map(p => (
+                        <div key={p.id} className="person-input-row">
+                            <input
+                                value={p.name}
+                                placeholder="Name"
+                                onChange={(e) => updatePerson(p.id, 'name', e.target.value)}
+                            />
+                            <select value={p.type} onChange={(e) => updatePerson(p.id, 'type', e.target.value)}>
+                                <option value="ADULT">Erwachsen</option>
+                                <option value="TEEN">Jugendlich</option>
+                                <option value="CHILD">Kind</option>
+                                <option value="TODDLER">Kleinkind</option>
+                            </select>
+                            <button
+                                className="danger-btn small-btn"
+                                onClick={() => setPeople(people.filter(item => item.id !== p.id))}
+                                title="Entfernen"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="wizard-actions">
+                    <button className="primary-btn" onClick={handlePlan} disabled={loading || !destination || people.length === 0}>
+                        {loading ? 'Berechne Packliste...' : '🚀 Packliste generieren'}
+                    </button>
+                    <button className="secondary" onClick={loadTestData}>
+                        ✨ Testdaten laden (Island)
+                    </button>
+                </div>
+            </div>
+
+            {result && (
+                <div className="result-container">
+                    <div className="packing-dashboard">
+                        <div className="dashboard-header">
+                            <div>
+                                <h2>📋 Interaktive Packliste</h2>
+                                <p className="dashboard-meta">
+                                    {destination} • {days} Tage • {people.length} Personen
+                                </p>
+                            </div>
+                            <div className="progress-badge">
+                                <span className="progress-number">{stats.percent}%</span>
+                                <span className="progress-sub">gepackt</span>
+                            </div>
+                        </div>
+
+                        {/* Global Progress Bar */}
+                        <div className="progress-bar-container">
+                            <div
+                                className="progress-bar-fill"
+                                style={{ width: `${stats.percent}%` }}
+                            />
+                        </div>
+                        <div className="progress-label">
+                            <span>{stats.packed} von {stats.total} Gegenständen eingepackt</span>
+                            {stats.percent === 100 && <span className="ready-badge">🎉 Alles gepackt! Gute Reise!</span>}
+                        </div>
+
+                        {/* Interactive Toolbar */}
+                        <div className="checklist-toolbar">
+                            <div className="filter-buttons">
+                                <button
+                                    className={`filter-btn ${filter === 'ALL' ? 'active' : ''}`}
+                                    onClick={() => setFilter('ALL')}
+                                >
+                                    Alle ({stats.total})
+                                </button>
+                                <button
+                                    className={`filter-btn ${filter === 'PENDING' ? 'active' : ''}`}
+                                    onClick={() => setFilter('PENDING')}
+                                >
+                                    Offen ({stats.total - stats.packed})
+                                </button>
+                                <button
+                                    className={`filter-btn ${filter === 'PACKED' ? 'active' : ''}`}
+                                    onClick={() => setFilter('PACKED')}
+                                >
+                                    Gepackt ({stats.packed})
+                                </button>
+                            </div>
+
+                            <div className="action-buttons">
+                                <button className="secondary small-btn" onClick={() => markAll(true)}>
+                                    ✓ Alle abhaken
+                                </button>
+                                <button className="secondary small-btn" onClick={() => markAll(false)}>
+                                    ↺ Zurücksetzen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* People Cards */}
+                    {result.people.map(p => {
+                        const pStat = stats.personStats[p.id] || { total: 0, packed: 0, percent: 0 };
+                        const visibleItems = p.inventory.filter(item => filterItem(p.id, item.id));
+
+                        return (
+                            <div key={p.id} className="person-card">
+                                <div className="card-header">
+                                    <div className="card-title-group">
+                                        <h3>{p.name}</h3>
+                                        <span className="type-badge">{p.type}</span>
+                                    </div>
+                                    <div className="card-progress">
+                                        <span className="count-text">{pStat.packed} / {pStat.total} gepackt ({pStat.percent}%)</span>
+                                        <div className="mini-progress-bar">
+                                            <div className="mini-progress-fill" style={{ width: `${pStat.percent}%` }} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="item-list">
+                                    {visibleItems.length === 0 ? (
+                                        <p className="no-items">Keine Gegenstände für diesen Filter.</p>
+                                    ) : (
+                                        visibleItems.map(item => {
+                                            const packed = isItemPacked(p.id, item.id);
+                                            return (
+                                                <div
+                                                    key={item.id}
+                                                    className={`item-badge ${packed ? 'packed' : ''}`}
+                                                    onClick={() => toggleItem(p.id, item.id)}
+                                                    role="checkbox"
+                                                    aria-checked={packed}
+                                                    tabIndex={0}
+                                                >
+                                                    <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
+                                                    <span className="item-details">
+                                                        <span className="item-name">{item.quantity}x {item.name}</span>
+                                                        <span className="item-weight">{item.weight}g</span>
+                                                    </span>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                                <div className="card-footer">
+                                    <span>Gewicht: <strong>{(p.currentLoad / 1000).toFixed(1)} kg</strong> / {(p.maxLoad / 1000).toFixed(1)} kg</span>
+                                </div>
+                            </div>
+                        );
+                    })}
+
+                    {/* Community Box */}
+                    {result.communityBox.length > 0 && (
+                        <div className="community-box">
+                            <div className="card-header">
+                                <div className="card-title-group">
+                                    <h3>📦 Community Box (Gemeinsames Gepäck)</h3>
+                                </div>
+                                <div className="card-progress">
+                                    <span className="count-text">{stats.community.packed} / {stats.community.total} gepackt ({stats.community.percent}%)</span>
+                                    <div className="mini-progress-bar community-bar">
+                                        <div className="mini-progress-fill community-fill" style={{ width: `${stats.community.percent}%` }} />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="item-list">
+                                {result.communityBox.filter(item => filterItem('community', item.id)).length === 0 ? (
+                                    <p className="no-items">Keine Gegenstände für diesen Filter.</p>
+                                ) : (
+                                    result.communityBox.filter(item => filterItem('community', item.id)).map(item => {
+                                        const packed = isItemPacked('community', item.id);
+                                        return (
+                                            <div
+                                                key={item.id}
+                                                className={`item-badge ${packed ? 'packed' : ''}`}
+                                                onClick={() => toggleItem('community', item.id)}
+                                                role="checkbox"
+                                                aria-checked={packed}
+                                                tabIndex={0}
+                                            >
+                                                <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
+                                                <span className="item-details">
+                                                    <span className="item-name">{item.quantity}x {item.name}</span>
+                                                    <span className="item-weight">{item.weight}g</span>
+                                                </span>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+export default App;

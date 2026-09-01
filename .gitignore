@@ -1,0 +1,17 @@
+# Dependencies
+node_modules
+dist
+dist-ssr
+*.local
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode
+.idea
