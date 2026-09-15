@@ -18,7 +18,7 @@ export interface Person {
     healthConditions?: HealthConditionType[];
 }
 
-export type Category = 'clothing' | 'hygiene' | 'electronics' | 'misc' | 'shared';
+export type Category = 'clothing' | 'hygiene' | 'electronics' | 'misc' | 'shared' | 'documents' | 'health';
 
 export interface Item {
     id: string;
@@ -31,6 +31,7 @@ export interface Item {
 
 import { WeatherTriggers } from '../services/WeatherService';
 import { getItemsForActivities } from './activityCatalog';
+import { CatalogItem } from './defaultCatalog';
 
 export interface PackingRequest {
     destination: string;
@@ -44,6 +45,7 @@ export interface PackingRequest {
     weatherTriggers?: WeatherTriggers; // Phase 4 Extension
     transportLimit: number; // in grams per person (e.g. 23000)
     mode: 'SHARED' | 'INDEPENDENT';
+    customCatalog?: CatalogItem[];
 }
 
 export const HEALTH_ITEM_CATALOG: Record<HealthConditionType, { name: string; weight: number; quantity: number }> = {
@@ -87,25 +89,7 @@ export class PackingEngine {
 
     private generateProposedItems(request: PackingRequest): Item[] {
         const items: Item[] = [];
-        const { days, weatherCondition, weatherTriggers, activities } = request;
-
-        // Quantities
-        const underwearCount = days;
-        const socksCount = days;
-        const tShirtCount = days;
-        const pantsCount = Math.max(1, Math.ceil(days / 3));
-        const sweaterCount = Math.max(1, Math.ceil(days / 4));
-
-        // Add Base Items (100% German)
-        items.push(
-            { id: 'underwear', name: 'Unterwäsche', weight: 50, category: 'clothing', tags: ['base'], quantity: underwearCount },
-            { id: 'socks', name: 'Socken', weight: 50, category: 'clothing', tags: ['base'], quantity: socksCount },
-            { id: 'jeans', name: 'Hosen / Jeans', weight: 600, category: 'clothing', tags: ['base'], quantity: pantsCount },
-            { id: 'tshirt', name: 'T-Shirts', weight: 200, category: 'clothing', tags: ['base'], quantity: tShirtCount },
-            { id: 'hoodie', name: 'Pullover / Hoodie', weight: 500, category: 'clothing', tags: ['base'], quantity: sweaterCount },
-            { id: 'shoes', name: 'Schuhe', weight: 800, category: 'clothing', tags: ['base'], quantity: 1 },
-            { id: 'jacket', name: 'Jacke', weight: 800, category: 'clothing', tags: ['base'], quantity: 1 }
-        );
+        const { days, weatherCondition, weatherTriggers, activities, customCatalog } = request;
 
         // Weather Logic
         let isRainy = false;
@@ -119,11 +103,70 @@ export class PackingEngine {
             isCold = weatherCondition.minTemp < 10;
         }
 
-        if (isRainy) {
-            items.push({ id: 'raincoat', name: 'Regenjacke', weight: 400, category: 'clothing', tags: ['rain'], quantity: 1 });
-        }
-        if (isCold) {
-            items.push({ id: 'thermals', name: 'Thermokleidung / Skiunterwäsche', weight: 300, category: 'clothing', tags: ['cold'], quantity: 1 });
+        if (customCatalog && customCatalog.length > 0) {
+            // Dynamic generation from custom catalog
+            const enabledItems = customCatalog.filter(c => c.enabled);
+            for (const catItem of enabledItems) {
+                // Weather conditions
+                if (catItem.tags.includes('rain') && !isRainy) continue;
+                if (catItem.tags.includes('cold') && !isCold) continue;
+
+                let quantity = catItem.defaultQuantity;
+                if (catItem.ruleType === 'PER_DAY') {
+                    quantity = catItem.defaultQuantity * days * (catItem.ruleValue || 1);
+                } else if (catItem.ruleType === 'PER_X_DAYS') {
+                    quantity = Math.max(1, Math.ceil(days / (catItem.ruleValue || 3))) * catItem.defaultQuantity;
+                } else if (catItem.ruleType === 'FIXED') {
+                    quantity = catItem.defaultQuantity * (catItem.ruleValue || 1);
+                } else if (catItem.ruleType === 'SHARED_PER_PEOPLE') {
+                    quantity = catItem.defaultQuantity;
+                }
+
+                items.push({
+                    id: catItem.id,
+                    name: catItem.name,
+                    weight: catItem.weight,
+                    category: catItem.category,
+                    tags: [...catItem.tags],
+                    quantity
+                });
+            }
+        } else {
+            // Default Base Items (100% German)
+            const underwearCount = days;
+            const socksCount = days;
+            const tShirtCount = days;
+            const pantsCount = Math.max(1, Math.ceil(days / 3));
+            const sweaterCount = Math.max(1, Math.ceil(days / 4));
+
+            items.push(
+                { id: 'underwear', name: 'Unterwäsche', weight: 50, category: 'clothing', tags: ['base'], quantity: underwearCount },
+                { id: 'socks', name: 'Socken', weight: 50, category: 'clothing', tags: ['base'], quantity: socksCount },
+                { id: 'jeans', name: 'Hosen / Jeans', weight: 600, category: 'clothing', tags: ['base'], quantity: pantsCount },
+                { id: 'tshirt', name: 'T-Shirts', weight: 200, category: 'clothing', tags: ['base'], quantity: tShirtCount },
+                { id: 'hoodie', name: 'Pullover / Hoodie', weight: 500, category: 'clothing', tags: ['base'], quantity: sweaterCount },
+                { id: 'shoes', name: 'Schuhe', weight: 800, category: 'clothing', tags: ['base'], quantity: 1 },
+                { id: 'jacket', name: 'Jacke', weight: 800, category: 'clothing', tags: ['base'], quantity: 1 }
+            );
+
+            if (isRainy) {
+                items.push({ id: 'raincoat', name: 'Regenjacke', weight: 400, category: 'clothing', tags: ['rain'], quantity: 1 });
+            }
+            if (isCold) {
+                items.push({ id: 'thermals', name: 'Thermokleidung / Skiunterwäsche', weight: 300, category: 'clothing', tags: ['cold'], quantity: 1 });
+            }
+
+            // Shared Items & Basis-Reiseapotheke (German)
+            items.push(
+                { id: 'toothpaste', name: 'Zahnpasta & Zahnbürste', weight: 150, category: 'shared', tags: ['hygiene'], quantity: 1 },
+                { id: 'shampoo', name: 'Shampoo & Duschgel', weight: 300, category: 'shared', tags: ['hygiene'], quantity: 1 },
+                { id: 'sunscreen', name: 'Sonnencreme', weight: 250, category: 'shared', tags: ['hygiene'], quantity: 1 },
+                { id: 'powerbank', name: 'Powerbank', weight: 400, category: 'shared', tags: ['electronics'], quantity: 1 },
+                // Basis-Reiseapotheke (Gemeinschaftlich)
+                { id: 'first_aid_kit', name: 'Reiseapotheke (Schmerzmittel & Wundpflaster)', weight: 300, category: 'shared', tags: ['health', 'shared'], quantity: 1 },
+                { id: 'stomach_meds', name: 'Magen-Darm-Präparate & Elektrolyte', weight: 150, category: 'shared', tags: ['health', 'shared'], quantity: 1 },
+                { id: 'thermometer', name: 'Fieberthermometer', weight: 50, category: 'shared', tags: ['health', 'shared'], quantity: 1 }
+            );
         }
 
         // Activity Logic from Activity Catalog
@@ -136,18 +179,6 @@ export class PackingEngine {
                 }
             });
         }
-
-        // Shared Items & Basis-Reiseapotheke (German)
-        items.push(
-            { id: 'toothpaste', name: 'Zahnpasta & Zahnbürste', weight: 150, category: 'shared', tags: ['hygiene'], quantity: 1 },
-            { id: 'shampoo', name: 'Shampoo & Duschgel', weight: 300, category: 'shared', tags: ['hygiene'], quantity: 1 },
-            { id: 'sunscreen', name: 'Sonnencreme', weight: 250, category: 'shared', tags: ['hygiene'], quantity: 1 },
-            { id: 'powerbank', name: 'Powerbank', weight: 400, category: 'shared', tags: ['electronics'], quantity: 1 },
-            // Basis-Reiseapotheke (Gemeinschaftlich)
-            { id: 'first_aid_kit', name: 'Reiseapotheke (Schmerzmittel & Wundpflaster)', weight: 300, category: 'shared', tags: ['health', 'shared'], quantity: 1 },
-            { id: 'stomach_meds', name: 'Magen-Darm-Präparate & Elektrolyte', weight: 150, category: 'shared', tags: ['health', 'shared'], quantity: 1 },
-            { id: 'thermometer', name: 'Fieberthermometer', weight: 50, category: 'shared', tags: ['health', 'shared'], quantity: 1 }
-        );
 
         return items;
     }

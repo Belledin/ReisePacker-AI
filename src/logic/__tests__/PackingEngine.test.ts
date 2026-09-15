@@ -404,4 +404,144 @@ describe('PackingEngine', () => {
             });
         });
     });
+
+    describe('Custom Catalog & Dynamic Calculation Rules', () => {
+        test('should generate items with ruleType PER_DAY, PER_X_DAYS, FIXED, SHARED_PER_PEOPLE', () => {
+            const request: PackingRequest = {
+                destination: 'Tokyo',
+                days: 6,
+                people: [createPerson('Traveler', 'ADULT')],
+                activities: [],
+                transportLimit: 23000,
+                mode: 'SHARED',
+                customCatalog: [
+                    {
+                        id: 'custom_shirt',
+                        name: 'Lieblingsshirt',
+                        weight: 180,
+                        category: 'clothing',
+                        tags: ['base'],
+                        ruleType: 'PER_DAY',
+                        ruleValue: 2, // 2 per day * 6 days = 12
+                        defaultQuantity: 1,
+                        isDefault: false,
+                        enabled: true
+                    },
+                    {
+                        id: 'custom_trousers',
+                        name: 'Spezialhose',
+                        weight: 500,
+                        category: 'clothing',
+                        tags: ['base'],
+                        ruleType: 'PER_X_DAYS',
+                        ruleValue: 2, // 6 days / 2 = 3
+                        defaultQuantity: 1,
+                        isDefault: false,
+                        enabled: true
+                    },
+                    {
+                        id: 'custom_fixed',
+                        name: 'Reiseführer',
+                        weight: 250,
+                        category: 'misc',
+                        tags: ['base'],
+                        ruleType: 'FIXED',
+                        ruleValue: 1,
+                        defaultQuantity: 2, // 2 fixed
+                        isDefault: false,
+                        enabled: true
+                    },
+                    {
+                        id: 'disabled_item',
+                        name: 'Deaktiviertes Item',
+                        weight: 100,
+                        category: 'clothing',
+                        tags: ['base'],
+                        ruleType: 'FIXED',
+                        ruleValue: 1,
+                        defaultQuantity: 1,
+                        isDefault: false,
+                        enabled: false // disabled
+                    }
+                ]
+            };
+
+            const { people } = engine.generateList(request);
+            const inv = people[0].inventory;
+
+            const shirt = inv.find(i => i.id === 'custom_shirt');
+            expect(shirt).toBeDefined();
+            expect(shirt!.quantity).toBe(12); // 1 * 6 * 2
+
+            const trousers = inv.find(i => i.id === 'custom_trousers');
+            expect(trousers).toBeDefined();
+            expect(trousers!.quantity).toBe(3); // Math.ceil(6 / 2)
+
+            const book = inv.find(i => i.id === 'custom_fixed');
+            expect(book).toBeDefined();
+            expect(book!.quantity).toBe(2);
+
+            // Disabled item should NOT be packed
+            expect(inv.some(i => i.id === 'disabled_item')).toBe(false);
+        });
+
+        test('should filter weather items in customCatalog according to weather conditions', () => {
+            const customCatalog = [
+                {
+                    id: 'custom_umbrella',
+                    name: 'Regenschirm',
+                    weight: 300,
+                    category: 'misc' as const,
+                    tags: ['rain'],
+                    ruleType: 'FIXED' as const,
+                    ruleValue: 1,
+                    defaultQuantity: 1,
+                    isDefault: false,
+                    enabled: true
+                },
+                {
+                    id: 'custom_scarf',
+                    name: 'Wollschal',
+                    weight: 150,
+                    category: 'clothing' as const,
+                    tags: ['cold'],
+                    ruleType: 'FIXED' as const,
+                    ruleValue: 1,
+                    defaultQuantity: 1,
+                    isDefault: false,
+                    enabled: true
+                }
+            ];
+
+            // Dry & warm weather
+            const reqDry: PackingRequest = {
+                destination: 'Mallorca',
+                days: 3,
+                people: [createPerson('P1', 'ADULT')],
+                activities: [],
+                weatherCondition: { rainProbability: 10, minTemp: 22 },
+                transportLimit: 23000,
+                mode: 'SHARED',
+                customCatalog
+            };
+            const resDry = engine.generateList(reqDry);
+            expect(resDry.people[0].inventory.some(i => i.id === 'custom_umbrella')).toBe(false);
+            expect(resDry.people[0].inventory.some(i => i.id === 'custom_scarf')).toBe(false);
+
+            // Rainy & cold weather
+            const reqWetCold: PackingRequest = {
+                destination: 'Island',
+                days: 3,
+                people: [createPerson('P1', 'ADULT')],
+                activities: [],
+                weatherCondition: { rainProbability: 80, minTemp: 2 },
+                transportLimit: 23000,
+                mode: 'SHARED',
+                customCatalog
+            };
+            const resWetCold = engine.generateList(reqWetCold);
+            expect(resWetCold.people[0].inventory.some(i => i.id === 'custom_umbrella')).toBe(true);
+            expect(resWetCold.people[0].inventory.some(i => i.id === 'custom_scarf')).toBe(true);
+        });
+    });
 });

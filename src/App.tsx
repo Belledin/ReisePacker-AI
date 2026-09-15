@@ -1,13 +1,17 @@
 import React, { useState, useMemo } from 'react';
-import { PackingEngine, PackingRequest, Person, Item, HealthConditionType } from './logic/PackingEngine';
+import { PackingEngine, PackingRequest, Person, Item, HealthConditionType, Category } from './logic/PackingEngine';
 import { WeatherService } from './services/WeatherService';
 import { ChecklistManager } from './logic/ChecklistManager';
 import { ACTIVITY_CATALOG, ActivityType } from './logic/activityCatalog';
+import { ItemCatalogManager } from './logic/ItemCatalogManager';
+import { CatalogManagerView } from './components/CatalogManagerView';
+import { AddAdHocItemModal } from './components/AddAdHocItemModal';
 
 // Simple unique ID generator
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
 type FilterMode = 'ALL' | 'PENDING' | 'PACKED';
+type ActiveTab = 'TRIP_PLANNER' | 'CATALOG';
 
 export const HEALTH_CONDITIONS: { id: HealthConditionType; name: string; emoji: string }[] = [
     { id: 'daily_meds', name: 'Dauermedikation', emoji: '💊' },
@@ -19,6 +23,10 @@ export const HEALTH_CONDITIONS: { id: HealthConditionType; name: string; emoji: 
 ];
 
 function App() {
+    const [activeTab, setActiveTab] = useState<ActiveTab>('TRIP_PLANNER');
+    const [catalogManager] = useState(() => new ItemCatalogManager());
+    const [, setCatalogVersion] = useState<number>(0);
+
     const [destination, setDestination] = useState('');
     const [days, setDays] = useState(3);
     const [people, setPeople] = useState<Person[]>([]);
@@ -35,6 +43,13 @@ function App() {
     const [checklistManager, setChecklistManager] = useState<ChecklistManager | null>(null);
     const [packedVersion, setPackedVersion] = useState<number>(0);
     const [filter, setFilter] = useState<FilterMode>('ALL');
+
+    // Ad-hoc item modal state
+    const [adHocModal, setAdHocModal] = useState<{
+        targetType: 'PERSON' | 'COMMUNITY';
+        targetId: string;
+        targetName: string;
+    } | null>(null);
 
     const addPerson = () => {
         const newPerson: Person = {
@@ -126,7 +141,8 @@ function App() {
                 activities,
                 weatherTriggers: triggers,
                 transportLimit: maxWeight,
-                mode
+                mode,
+                customCatalog: catalogManager.getEnabled()
             };
 
             const res = engine.generateList(request);
@@ -143,6 +159,77 @@ function App() {
             console.error("Error generating packing plan:", error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    // Ad-hoc item manipulation
+    const handleAddAdHocItem = (
+        itemData: { name: string; quantity: number; weight: number; category: Category; tags: string[] },
+        saveToCatalog: boolean
+    ) => {
+        if (!adHocModal || !result) return;
+
+        const newItemId = `adhoc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const newItem: Item = {
+            id: newItemId,
+            name: itemData.name,
+            weight: itemData.weight,
+            category: itemData.category,
+            tags: itemData.tags,
+            quantity: itemData.quantity
+        };
+
+        if (adHocModal.targetType === 'PERSON') {
+            const updatedPeople = result.people.map(p => {
+                if (p.id !== adHocModal.targetId) return p;
+                return {
+                    ...p,
+                    inventory: [...p.inventory, newItem],
+                    currentLoad: p.currentLoad + (newItem.weight * newItem.quantity)
+                };
+            });
+            setResult({ ...result, people: updatedPeople });
+        } else {
+            setResult({
+                ...result,
+                communityBox: [...result.communityBox, newItem]
+            });
+        }
+
+        if (saveToCatalog) {
+            catalogManager.addItem({
+                name: itemData.name,
+                weight: itemData.weight,
+                category: itemData.category,
+                tags: itemData.tags,
+                ruleType: 'FIXED',
+                ruleValue: 1,
+                defaultQuantity: itemData.quantity,
+                enabled: true
+            });
+            setCatalogVersion(v => v + 1);
+        }
+    };
+
+    const handleRemoveItem = (targetType: 'PERSON' | 'COMMUNITY', targetId: string, itemId: string) => {
+        if (!result) return;
+        if (targetType === 'PERSON') {
+            const updatedPeople = result.people.map(p => {
+                if (p.id !== targetId) return p;
+                const targetItem = p.inventory.find(i => i.id === itemId);
+                const weightLoss = targetItem ? targetItem.weight * targetItem.quantity : 0;
+                return {
+                    ...p,
+                    inventory: p.inventory.filter(i => i.id !== itemId),
+                    currentLoad: Math.max(0, p.currentLoad - weightLoss)
+                };
+            });
+            setResult({ ...result, people: updatedPeople });
+        } else {
+            setResult({
+                ...result,
+                communityBox: result.communityBox.filter(i => i.id !== itemId)
+            });
         }
     };
 
@@ -250,9 +337,30 @@ function App() {
             <header className="app-header">
                 <h1>ReisePacker AI 🧳</h1>
                 <p className="subtitle">Smarte Packlisten mit Wetter- & Gewichtsanalyse</p>
+                <div className="nav-tabs">
+                    <button
+                        className={`nav-tab ${activeTab === 'TRIP_PLANNER' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('TRIP_PLANNER')}
+                    >
+                        🎒 Reise planen
+                    </button>
+                    <button
+                        className={`nav-tab ${activeTab === 'CATALOG' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('CATALOG')}
+                    >
+                        📦 Gegenstände verwalten
+                    </button>
+                </div>
             </header>
 
-            <div className="wizard-container">
+            {activeTab === 'CATALOG' ? (
+                <CatalogManagerView
+                    catalogManager={catalogManager}
+                    onCatalogUpdated={() => setCatalogVersion(v => v + 1)}
+                />
+            ) : (
+                <>
+                    <div className="wizard-container">
                 <h2>Reise konfigurieren</h2>
 
                 <div className="form-group">
@@ -497,8 +605,18 @@ function App() {
                                                         <span className="item-name">
                                                             {item.quantity}x {item.name} {badge}{healthBadge}
                                                         </span>
-                                                        <span className="item-weight">{item.weight}g</span>
+                                                        <span className="item-weight">{item.weight * item.quantity}g</span>
                                                     </span>
+                                                    <button
+                                                        className="item-delete-btn"
+                                                        title="Gegenstand entfernen"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleRemoveItem('PERSON', p.id, item.id);
+                                                        }}
+                                                    >
+                                                        ✕
+                                                    </button>
                                                 </div>
                                             );
                                         })
@@ -506,6 +624,16 @@ function App() {
                                 </div>
                                 <div className="card-footer">
                                     <span>Gewicht: <strong>{(p.currentLoad / 1000).toFixed(1)} kg</strong> / {(p.maxLoad / 1000).toFixed(1)} kg</span>
+                                    <button
+                                        className="small-btn add-adhoc-btn"
+                                        onClick={() => setAdHocModal({
+                                            targetType: 'PERSON',
+                                            targetId: p.id,
+                                            targetName: p.name
+                                        })}
+                                    >
+                                        ➕ Gegenstand
+                                    </button>
                                 </div>
                             </div>
                         );
@@ -517,6 +645,16 @@ function App() {
                             <div className="card-header">
                                 <div className="card-title-group">
                                     <h3>📦 Community Box (Gemeinsames Gepäck)</h3>
+                                    <button
+                                        className="small-btn add-adhoc-btn"
+                                        onClick={() => setAdHocModal({
+                                            targetType: 'COMMUNITY',
+                                            targetId: 'community',
+                                            targetName: 'Community Box'
+                                        })}
+                                    >
+                                        ➕ Gegenstand
+                                    </button>
                                 </div>
                                 <div className="card-progress">
                                     <span className="count-text">{stats.community.packed} / {stats.community.total} gepackt ({stats.community.percent}%)</span>
@@ -548,8 +686,18 @@ function App() {
                                                     <span className="item-name">
                                                         {item.quantity}x {item.name} {badge}{healthBadge}
                                                     </span>
-                                                    <span className="item-weight">{item.weight}g</span>
+                                                    <span className="item-weight">{item.weight * item.quantity}g</span>
                                                 </span>
+                                                <button
+                                                    className="item-delete-btn"
+                                                    title="Gegenstand entfernen"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleRemoveItem('COMMUNITY', 'community', item.id);
+                                                    }}
+                                                >
+                                                    ✕
+                                                </button>
                                             </div>
                                         );
                                     })
@@ -558,6 +706,17 @@ function App() {
                         </div>
                     )}
                 </div>
+            )}
+            </>
+            )}
+
+            {adHocModal && (
+                <AddAdHocItemModal
+                    targetName={adHocModal.targetName}
+                    catalogItems={catalogManager.getEnabled()}
+                    onClose={() => setAdHocModal(null)}
+                    onAdd={handleAddAdHocItem}
+                />
             )}
         </div>
     );
