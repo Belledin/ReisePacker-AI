@@ -577,3 +577,74 @@ button.secondary:hover {
   vertical-align: middle;
 }
 
+/* Person Input Card (wraps row + health section) */
+.person-input-card {
+  background: #1e1f25;
+  border-radius: 10px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #2d2e36;
+}
+
+.person-input-card .person-input-row {
+  margin-bottom: 0.5rem;
+}
+
+/* Health Section */
+.health-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.health-section-label {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  white-space: nowrap;
+  padding-top: 0.3rem;
+}
+
+.health-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.health-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 16px;
+  border: 1px solid #3f3f46;
+  background: #27272a;
+  color: #a1a1aa;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all 0.15s ease;
+}
+
+.health-chip:hover {
+  border-color: #f472b6;
+  color: #f9a8d4;
+  background: #27272a;
+}
+
+.health-chip.active {
+  border-color: #f472b6;
+  background: rgba(244, 114, 182, 0.15);
+  color: #f9a8d4;
+}
+
+.health-chip-name {
+  white-space: nowrap;
+}
+
+/* Health Indicator Badge (on items in packing list) */
+.health-indicator {
+  display: inline-block;
+  margin-left: 0.35rem;
+  font-size: 0.85rem;
+  vertical-align: middle;
+}

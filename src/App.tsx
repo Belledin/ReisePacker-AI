@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { PackingEngine, PackingRequest, Person, Item } from './logic/PackingEngine';
+import { PackingEngine, PackingRequest, Person, Item, HealthConditionType } from './logic/PackingEngine';
 import { WeatherService } from './services/WeatherService';
 import { ChecklistManager } from './logic/ChecklistManager';
 import { ACTIVITY_CATALOG, ActivityType } from './logic/activityCatalog';
@@ -8,6 +8,15 @@ import { ACTIVITY_CATALOG, ActivityType } from './logic/activityCatalog';
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
 type FilterMode = 'ALL' | 'PENDING' | 'PACKED';
+
+export const HEALTH_CONDITIONS: { id: HealthConditionType; name: string; emoji: string }[] = [
+    { id: 'daily_meds', name: 'Dauermedikation', emoji: '💊' },
+    { id: 'allergies', name: 'Allergien', emoji: '🤧' },
+    { id: 'asthma', name: 'Asthma', emoji: '🫁' },
+    { id: 'diabetes', name: 'Diabetes', emoji: '🩸' },
+    { id: 'motion_sickness', name: 'Reisekrankheit', emoji: '🚗' },
+    { id: 'contact_lenses', name: 'Kontaktlinsen', emoji: '👁️' }
+];
 
 function App() {
     const [destination, setDestination] = useState('');
@@ -34,13 +43,25 @@ function App() {
             type: 'ADULT',
             inventory: [],
             currentLoad: 0,
-            maxLoad: maxWeight
+            maxLoad: maxWeight,
+            healthConditions: []
         };
         setPeople([...people, newPerson]);
     };
 
     const updatePerson = (id: string, field: keyof Person, value: any) => {
         setPeople(people.map(p => p.id === id ? { ...p, [field]: value } : p));
+    };
+
+    const togglePersonHealthCondition = (personId: string, condId: HealthConditionType) => {
+        setPeople(people.map(p => {
+            if (p.id !== personId) return p;
+            const current = p.healthConditions || [];
+            const updated = current.includes(condId)
+                ? current.filter(c => c !== condId)
+                : [...current, condId];
+            return { ...p, healthConditions: updated };
+        }));
     };
 
     const toggleActivity = (actId: string) => {
@@ -56,10 +77,10 @@ function App() {
         setActivities(['hiking', 'sightseeing']);
 
         setPeople([
-            { id: generateId(), name: 'Dad', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000 },
-            { id: generateId(), name: 'Mom', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000 },
-            { id: generateId(), name: 'Teen 1', type: 'TEEN', inventory: [], currentLoad: 0, maxLoad: 23000 },
-            { id: generateId(), name: 'Kid 1', type: 'CHILD', inventory: [], currentLoad: 0, maxLoad: 15000 }
+            { id: generateId(), name: 'Papa', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000, healthConditions: ['daily_meds', 'allergies'] },
+            { id: generateId(), name: 'Mama', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000, healthConditions: ['contact_lenses'] },
+            { id: generateId(), name: 'Teenager', type: 'TEEN', inventory: [], currentLoad: 0, maxLoad: 23000, healthConditions: ['asthma'] },
+            { id: generateId(), name: 'Kind', type: 'CHILD', inventory: [], currentLoad: 0, maxLoad: 15000, healthConditions: ['motion_sickness'] }
         ]);
     };
 
@@ -94,7 +115,8 @@ function App() {
             // CLONE people to avoid mutating state directly in PackingEngine
             const peopleClone = people.map(p => ({
                 ...p,
-                inventory: [...p.inventory]
+                inventory: [...p.inventory],
+                healthConditions: p.healthConditions ? [...p.healthConditions] : []
             }));
 
             const request: PackingRequest = {
@@ -212,10 +234,15 @@ function App() {
 
     const getActivityBadge = (tags: string[]) => {
         if (!tags || !tags.includes('activity')) return null;
-        const actTag = tags.find(t => t !== 'activity' && t !== 'base' && t !== 'rain' && t !== 'cold');
+        const actTag = tags.find(t => t !== 'activity' && t !== 'base' && t !== 'rain' && t !== 'cold' && t !== 'health');
         if (!actTag) return null;
         const def = ACTIVITY_CATALOG[actTag as ActivityType];
         return def ? <span className="activity-indicator" title={def.name}>{def.emoji}</span> : null;
+    };
+
+    const getHealthBadge = (tags: string[]) => {
+        if (!tags || !tags.includes('health')) return null;
+        return <span className="health-indicator" title="Gesundheit / Medikamente">💊</span>;
     };
 
     return (
@@ -311,25 +338,47 @@ function App() {
                     )}
 
                     {people.map(p => (
-                        <div key={p.id} className="person-input-row">
-                            <input
-                                value={p.name}
-                                placeholder="Name"
-                                onChange={(e) => updatePerson(p.id, 'name', e.target.value)}
-                            />
-                            <select value={p.type} onChange={(e) => updatePerson(p.id, 'type', e.target.value)}>
-                                <option value="ADULT">Erwachsen</option>
-                                <option value="TEEN">Jugendlich</option>
-                                <option value="CHILD">Kind</option>
-                                <option value="TODDLER">Kleinkind</option>
-                            </select>
-                            <button
-                                className="danger-btn small-btn"
-                                onClick={() => setPeople(people.filter(item => item.id !== p.id))}
-                                title="Entfernen"
-                            >
-                                ✕
-                            </button>
+                        <div key={p.id} className="person-input-card">
+                            <div className="person-input-row">
+                                <input
+                                    value={p.name}
+                                    placeholder="Name"
+                                    onChange={(e) => updatePerson(p.id, 'name', e.target.value)}
+                                />
+                                <select value={p.type} onChange={(e) => updatePerson(p.id, 'type', e.target.value)}>
+                                    <option value="ADULT">Erwachsen</option>
+                                    <option value="TEEN">Jugendlich</option>
+                                    <option value="CHILD">Kind</option>
+                                    <option value="TODDLER">Kleinkind</option>
+                                </select>
+                                <button
+                                    className="danger-btn small-btn"
+                                    onClick={() => setPeople(people.filter(item => item.id !== p.id))}
+                                    title="Entfernen"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            <div className="health-section">
+                                <span className="health-section-label">💊 Gesundheit:</span>
+                                <div className="health-chips">
+                                    {HEALTH_CONDITIONS.map(cond => {
+                                        const isActive = (p.healthConditions || []).includes(cond.id);
+                                        return (
+                                            <button
+                                                key={cond.id}
+                                                type="button"
+                                                className={`health-chip ${isActive ? 'active' : ''}`}
+                                                onClick={() => togglePersonHealthCondition(p.id, cond.id)}
+                                                title={cond.name}
+                                            >
+                                                <span>{cond.emoji}</span>
+                                                <span className="health-chip-name">{cond.name}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -433,6 +482,7 @@ function App() {
                                         visibleItems.map(item => {
                                             const packed = isItemPacked(p.id, item.id);
                                             const badge = getActivityBadge(item.tags);
+                                            const healthBadge = getHealthBadge(item.tags);
                                             return (
                                                 <div
                                                     key={item.id}
@@ -445,7 +495,7 @@ function App() {
                                                     <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
                                                     <span className="item-details">
                                                         <span className="item-name">
-                                                            {item.quantity}x {item.name} {badge}
+                                                            {item.quantity}x {item.name} {badge}{healthBadge}
                                                         </span>
                                                         <span className="item-weight">{item.weight}g</span>
                                                     </span>
@@ -483,6 +533,7 @@ function App() {
                                     result.communityBox.filter(item => filterItem('community', item.id)).map(item => {
                                         const packed = isItemPacked('community', item.id);
                                         const badge = getActivityBadge(item.tags);
+                                        const healthBadge = getHealthBadge(item.tags);
                                         return (
                                             <div
                                                 key={item.id}
@@ -495,7 +546,7 @@ function App() {
                                                 <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
                                                 <span className="item-details">
                                                     <span className="item-name">
-                                                        {item.quantity}x {item.name} {badge}
+                                                        {item.quantity}x {item.name} {badge}{healthBadge}
                                                     </span>
                                                     <span className="item-weight">{item.weight}g</span>
                                                 </span>
