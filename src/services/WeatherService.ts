@@ -44,29 +44,33 @@ export class WeatherService {
     }
 
     /**
+     * Get both raw weather data (temp, condition, rainProb) and calculated triggers.
+     */
+    public async getWeatherData(location: string, date: Date): Promise<{ data: WeatherData; triggers: WeatherTriggers }> {
+        try {
+            const data = await this.getWeatherForLocation(location, date);
+            const triggers = this.mapToTriggers(data);
+            return { data, triggers };
+        } catch (error) {
+            console.warn('Weather fetch failed, falling back to default', error);
+            const fallbackData: WeatherData = {
+                temp: 18,
+                rainProb: 15,
+                conditionCode: 'Clear'
+            };
+            return {
+                data: fallbackData,
+                triggers: this.mapToTriggers(fallbackData)
+            };
+        }
+    }
+
+    /**
      * Main entry point to get packing triggers.
      */
     public async getWeatherTriggers(location: string, date: Date): Promise<WeatherTriggers> {
-        try {
-            const data = await this.getWeatherForLocation(location, date);
-            return this.mapToTriggers(data);
-        } catch (error) {
-            console.warn('Weather fetch failed, falling back to manual/neutral', error);
-            // Fallback: asking user is UI concern. Logic returns neutral or throws.
-            // Requirement says: "Mechanismus, der den User ... fragt". 
-            // Here we return null or specific flag to let UI know to ask.
-            // For this logic layer, we'll return a default safe set (Assuming mild weather) 
-            // OR re-throw if the caller handles the "ask user" flow.
-            // Let's return a special "unknown" state implies false for extremes, 
-            // but realistically the UI should check validity.
-            // For now, return false flags.
-            return {
-                isRainy: false,
-                isCold: false,
-                isHot: false,
-                isSnowy: false
-            };
-        }
+        const result = await this.getWeatherData(location, date);
+        return result.triggers;
     }
 
     /**

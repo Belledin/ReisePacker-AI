@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { CatalogItem } from '../logic/defaultCatalog';
+import { CatalogItem, calculateCatalogItemQuantity } from '../logic/defaultCatalog';
 import { Category } from '../logic/PackingEngine';
 import { CATEGORY_LABELS } from './CatalogManagerView';
 
 interface AddAdHocItemModalProps {
     targetName: string; // e.g. "Papa" or "Community Box"
     catalogItems: CatalogItem[];
+    days?: number;
+    peopleCount?: number;
     onClose: () => void;
     onAdd: (
         item: {
@@ -22,6 +24,8 @@ interface AddAdHocItemModalProps {
 export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
     targetName,
     catalogItems,
+    days = 1,
+    peopleCount = 1,
     onClose,
     onAdd
 }) => {
@@ -31,6 +35,7 @@ export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
     const [weight, setWeight] = useState(100);
     const [category, setCategory] = useState<Category>('misc');
     const [saveToCatalog, setSaveToCatalog] = useState(false);
+    const [appliedRuleText, setAppliedRuleText] = useState<string | null>(null);
 
     const handleCatalogSelect = (id: string) => {
         setSelectedCatalogId(id);
@@ -38,6 +43,8 @@ export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
             setName('');
             setWeight(100);
             setCategory('misc');
+            setQuantity(1);
+            setAppliedRuleText(null);
             setSaveToCatalog(false);
         } else {
             const found = catalogItems.find(i => i.id === id);
@@ -45,7 +52,23 @@ export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
                 setName(found.name);
                 setWeight(found.weight);
                 setCategory(found.category);
-                setQuantity(found.defaultQuantity || 1);
+                
+                // Berechne die Menge anhand der hinterlegten Mengenregel
+                const calculatedQty = calculateCatalogItemQuantity(found, days, peopleCount);
+                setQuantity(calculatedQty);
+
+                // Erläuternden Text für die Mengenregel anzeigen
+                let ruleDesc = '';
+                if (found.ruleType === 'PER_DAY') {
+                    ruleDesc = `${found.defaultQuantity * (found.ruleValue || 1)}x pro Tag × ${days} Tage = ${calculatedQty} Stück`;
+                } else if (found.ruleType === 'PER_X_DAYS') {
+                    ruleDesc = `1x alle ${found.ruleValue || 3} Tage bei ${days} Reisetagen = ${calculatedQty} Stück`;
+                } else if (found.ruleType === 'SHARED_PER_PEOPLE') {
+                    ruleDesc = `Gemeinschaftlich für ${peopleCount} Personen = ${calculatedQty} Stück`;
+                } else {
+                    ruleDesc = `Feste Anzahl = ${calculatedQty} Stück`;
+                }
+                setAppliedRuleText(ruleDesc);
                 setSaveToCatalog(false);
             }
         }
@@ -124,6 +147,11 @@ export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
                                 onChange={(e) => setQuantity(Number(e.target.value))}
                                 required
                             />
+                            {appliedRuleText && (
+                                <small className="hint-text" style={{ color: '#0284c7', marginTop: '4px', display: 'block' }}>
+                                    ✨ Mengenregel angewendet: {appliedRuleText}
+                                </small>
+                            )}
                         </div>
 
                         <div className="form-group">

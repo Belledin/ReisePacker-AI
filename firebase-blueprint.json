@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "SharedTrip": {
+      "title": "SharedTrip",
+      "description": "Represents a collaborative packing trip list shared between travelers",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Trip identifier or share code (e.g. SOMMER-2026 or UUID)"
+        },
+        "shareCode": {
+          "type": "string",
+          "description": "Human readable uppercase share code for easy collaboration"
+        },
+        "destination": {
+          "type": "string",
+          "description": "Destination name"
+        },
+        "date": {
+          "type": "string",
+          "description": "Start date in ISO format YYYY-MM-DD"
+        },
+        "days": {
+          "type": "number",
+          "description": "Duration in days"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["SHARED", "INDEPENDENT"],
+          "description": "Packing mode"
+        },
+        "maxWeight": {
+          "type": "number",
+          "description": "Max luggage weight in grams"
+        },
+        "activities": {
+          "type": "string",
+          "description": "JSON serialized activities list"
+        },
+        "people": {
+          "type": "string",
+          "description": "JSON serialized list of Person objects including items and packed status"
+        },
+        "communityBox": {
+          "type": "string",
+          "description": "JSON serialized list of community items and packed status"
+        },
+        "weatherInfo": {
+          "type": "string",
+          "description": "JSON serialized cached weather data and triggers"
+        },
+        "lastUpdatedBy": {
+          "type": "string",
+          "description": "Name of the person who last edited or checked an item"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when trip was last updated"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when trip was created"
+        }
+      },
+      "required": ["id", "destination", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/trips/{tripId}": {
+      "schema": "SharedTrip",
+      "description": "Collection of collaborative trips synced between users in real time"
+    }
+  }
+}

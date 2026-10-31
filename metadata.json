@@ -1,0 +1,6 @@
+{
+  "name": "ReisePacker-AI",
+  "description": "Smarte, wetter- und gewichtsoptimierte Packlisten für Einzelpersonen, Familien und Gruppenreisen.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

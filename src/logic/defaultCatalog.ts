@@ -254,3 +254,29 @@ export const DEFAULT_CATALOG_ITEMS: CatalogItem[] = [
         enabled: true
     }
 ];
+
+/**
+ * Calculates the quantity for a catalog item based on its rule, trip duration and group size.
+ */
+export function calculateCatalogItemQuantity(
+    item: Pick<CatalogItem, 'ruleType' | 'ruleValue' | 'defaultQuantity'>,
+    days: number,
+    peopleCount: number = 1
+): number {
+    const baseQuantity = Math.max(1, item.defaultQuantity || 1);
+    const ruleVal = Math.max(1, item.ruleValue || 1);
+    const tripDays = Math.max(1, days || 1);
+    const numPeople = Math.max(1, peopleCount || 1);
+
+    switch (item.ruleType) {
+        case 'PER_DAY':
+            return baseQuantity * tripDays * ruleVal;
+        case 'PER_X_DAYS':
+            return Math.max(1, Math.ceil(tripDays / ruleVal)) * baseQuantity;
+        case 'SHARED_PER_PEOPLE':
+            return Math.max(1, Math.ceil(numPeople / ruleVal)) * baseQuantity;
+        case 'FIXED':
+        default:
+            return baseQuantity * ruleVal;
+    }
+}

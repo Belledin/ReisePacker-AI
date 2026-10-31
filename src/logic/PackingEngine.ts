@@ -31,7 +31,7 @@ export interface Item {
 
 import { WeatherTriggers } from '../services/WeatherService';
 import { getItemsForActivities } from './activityCatalog';
-import { CatalogItem } from './defaultCatalog';
+import { CatalogItem, calculateCatalogItemQuantity } from './defaultCatalog';
 
 export interface PackingRequest {
     destination: string;
@@ -63,6 +63,12 @@ export class PackingEngine {
     constructor() { }
 
     public generateList(request: PackingRequest): { people: Person[]; communityBox: Item[] } {
+        // Reset community box for fresh calculation
+        this.communityBox = [];
+
+        // Ensure safe people array
+        const safePeople = Array.isArray(request.people) ? request.people : [];
+
         // 1. Proposal Phase (Generate Items based on weather/activity/base/health)
         const neededItems = this.generateProposedItems(request);
 
@@ -71,18 +77,18 @@ export class PackingEngine {
         const personalItems = neededItems.filter(i => i.category !== 'shared');
 
         // 3. Distribute Personal Items (Individual copies for everyone + individual health items)
-        this.distributePersonalItems(request.people, personalItems);
+        this.distributePersonalItems(safePeople, personalItems);
 
         // 4. Distribute Shared Items based on Mode
         if (request.mode === 'SHARED') {
-            this.distributeSharedItems(request.people, sharedItems, request.transportLimit, request.days);
+            this.distributeSharedItems(safePeople, sharedItems, request.transportLimit || 23000, request.days || 3);
         } else {
             // Independent Mode: Shared items go to Community Box
-            this.calculateAndAddToCommunityBox(sharedItems, request.people.length, request.days);
+            this.calculateAndAddToCommunityBox(sharedItems, safePeople.length, request.days || 3);
         }
 
         return {
-            people: request.people,
+            people: safePeople,
             communityBox: this.communityBox
         };
     }
@@ -111,16 +117,7 @@ export class PackingEngine {
                 if (catItem.tags.includes('rain') && !isRainy) continue;
                 if (catItem.tags.includes('cold') && !isCold) continue;
 
-                let quantity = catItem.defaultQuantity;
-                if (catItem.ruleType === 'PER_DAY') {
-                    quantity = catItem.defaultQuantity * days * (catItem.ruleValue || 1);
-                } else if (catItem.ruleType === 'PER_X_DAYS') {
-                    quantity = Math.max(1, Math.ceil(days / (catItem.ruleValue || 3))) * catItem.defaultQuantity;
-                } else if (catItem.ruleType === 'FIXED') {
-                    quantity = catItem.defaultQuantity * (catItem.ruleValue || 1);
-                } else if (catItem.ruleType === 'SHARED_PER_PEOPLE') {
-                    quantity = catItem.defaultQuantity;
-                }
+                const quantity = calculateCatalogItemQuantity(catItem, days, request.people.length);
 
                 items.push({
                     id: catItem.id,
@@ -184,9 +181,17 @@ export class PackingEngine {
     }
 
     private distributePersonalItems(people: Person[], items: Item[]) {
+        if (!Array.isArray(people) || !Array.isArray(items)) return;
+
         people.forEach(person => {
+            if (!person.inventory) person.inventory = [];
+            if (typeof person.currentLoad !== 'number' || isNaN(person.currentLoad)) {
+                person.currentLoad = 0;
+            }
+
             // 1. Distribute standard personal items
             items.forEach(item => {
+                if (!item) return;
                 const personalItem = { ...item };
 
                 // Age/Size Weight Adjustment (PRD: Child 0.6, Toddler 0.3)
@@ -196,23 +201,24 @@ export class PackingEngine {
                     if (person.type === 'TODDLER') factor = 0.3;
                 }
 
-                personalItem.weight = Math.round(item.weight * factor);
+                personalItem.weight = Math.round((item.weight || 0) * factor);
+                personalItem.quantity = Math.max(1, item.quantity || 1);
                 person.inventory.push(personalItem);
                 person.currentLoad += (personalItem.weight * personalItem.quantity);
             });
 
             // 2. Distribute individual health/medication items
-            if (person.healthConditions && person.healthConditions.length > 0) {
+            if (Array.isArray(person.healthConditions) && person.healthConditions.length > 0) {
                 person.healthConditions.forEach(cond => {
                     const def = HEALTH_ITEM_CATALOG[cond];
                     if (def) {
                         const medItem: Item = {
-                            id: `med_${cond}`,
+                            id: `med_${cond}_${person.id}`,
                             name: def.name,
-                            weight: def.weight,
+                            weight: def.weight || 0,
                             category: 'misc',
                             tags: ['health', cond],
-                            quantity: def.quantity
+                            quantity: def.quantity || 1
                         };
                         person.inventory.push(medItem);
                         person.currentLoad += (medItem.weight * medItem.quantity);
@@ -223,24 +229,30 @@ export class PackingEngine {
     }
 
     private distributeSharedItems(people: Person[], items: Item[], limit: number, days: number) {
-        const expandedItems = this.calculateSharedNeeds(items, people.length, days);
+        if (!Array.isArray(items) || items.length === 0) return;
+        const safePeople = Array.isArray(people) ? people : [];
+        const expandedItems = this.calculateSharedNeeds(items, safePeople.length, days);
 
-        const sortedPeople = [...people].sort((a, b) => {
-            const priority = { 'ADULT': 0, 'TEEN': 1, 'CHILD': 2, 'TODDLER': 3 };
-            return priority[a.type] - priority[b.type];
+        const priority: Record<string, number> = { 'ADULT': 0, 'TEEN': 1, 'CHILD': 2, 'TODDLER': 3 };
+        const sortedPeople = [...safePeople].sort((a, b) => {
+            const pA = priority[a.type] !== undefined ? priority[a.type] : 99;
+            const pB = priority[b.type] !== undefined ? priority[b.type] : 99;
+            return pA - pB;
         });
 
         for (const item of expandedItems) {
             let assigned = false;
             const eligibleCarriers = sortedPeople.filter(p => ['ADULT', 'TEEN'].includes(p.type));
             const candidates = eligibleCarriers.length > 0 ? eligibleCarriers : sortedPeople;
-            candidates.sort((a, b) => a.currentLoad - b.currentLoad);
+            candidates.sort((a, b) => (a.currentLoad || 0) - (b.currentLoad || 0));
 
             for (const person of candidates) {
-                const totalWx = item.weight * item.quantity;
-                if (person.currentLoad + totalWx <= limit) {
+                const totalWx = (item.weight || 0) * (item.quantity || 1);
+                const pLimit = person.maxLoad || limit || 23000;
+                if ((person.currentLoad || 0) + totalWx <= pLimit) {
+                    if (!person.inventory) person.inventory = [];
                     person.inventory.push(item);
-                    person.currentLoad += totalWx;
+                    person.currentLoad = (person.currentLoad || 0) + totalWx;
                     assigned = true;
                     break;
                 }
@@ -248,21 +260,29 @@ export class PackingEngine {
 
             if (!assigned) {
                 if (sortedPeople.length > 0) {
-                    sortedPeople[0].inventory.push(item);
-                    sortedPeople[0].currentLoad += (item.weight * item.quantity);
+                    const fallbackPerson = sortedPeople[0];
+                    if (!fallbackPerson.inventory) fallbackPerson.inventory = [];
+                    fallbackPerson.inventory.push(item);
+                    fallbackPerson.currentLoad = (fallbackPerson.currentLoad || 0) + ((item.weight || 0) * (item.quantity || 1));
+                } else {
+                    this.communityBox.push(item);
                 }
             }
         }
     }
 
     private calculateAndAddToCommunityBox(items: Item[], personCount: number, days: number) {
+        if (!Array.isArray(items) || items.length === 0) return;
         const expandedItems = this.calculateSharedNeeds(items, personCount, days);
         this.communityBox.push(...expandedItems);
     }
 
     private calculateSharedNeeds(baseItems: Item[], personCount: number, days: number): Item[] {
+        if (!Array.isArray(baseItems)) return [];
         const result: Item[] = [];
-        const personDays = personCount * days;
+        const safePersonCount = Math.max(1, personCount || 1);
+        const safeDays = Math.max(1, days || 1);
+        const personDays = safePersonCount * safeDays;
 
         const usageRates: Record<string, number> = {
             'toothpaste': 30, // 1 tube for 30 person-days
@@ -275,15 +295,20 @@ export class PackingEngine {
         };
 
         for (const item of baseItems) {
+            if (!item) continue;
             let count = 1;
             if (usageRates[item.id]) {
                 count = Math.ceil(personDays / usageRates[item.id]);
             } else {
-                count = Math.ceil(personCount / 4);
+                count = Math.max(1, Math.ceil(safePersonCount / 4));
             }
 
             for (let i = 0; i < count; i++) {
-                result.push({ ...item, id: `${item.id}_${i + 1}`, quantity: 1 });
+                result.push({
+                    ...item,
+                    id: count > 1 ? `${item.id}_${i + 1}` : item.id,
+                    quantity: item.quantity || 1
+                });
             }
         }
         return result;

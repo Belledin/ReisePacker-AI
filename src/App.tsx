@@ -1,11 +1,15 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { PackingEngine, PackingRequest, Person, Item, HealthConditionType, Category } from './logic/PackingEngine';
-import { WeatherService } from './services/WeatherService';
+import { WeatherService, WeatherData, WeatherTriggers } from './services/WeatherService';
 import { ChecklistManager } from './logic/ChecklistManager';
 import { ACTIVITY_CATALOG, ActivityType } from './logic/activityCatalog';
 import { ItemCatalogManager } from './logic/ItemCatalogManager';
 import { CatalogManagerView } from './components/CatalogManagerView';
 import { AddAdHocItemModal } from './components/AddAdHocItemModal';
+import { WeatherDashboardSummary } from './components/WeatherDashboardSummary';
+import { CollaborationBar } from './components/CollaborationBar';
+import { LoadTripModal } from './components/LoadTripModal';
+import { CollaborativeTripService, CollaborativeTripData, generateShareCode } from './services/CollaborativeTripService';
 
 // Simple unique ID generator
 const generateId = () => Math.random().toString(36).substring(2, 9);
@@ -25,7 +29,7 @@ export const HEALTH_CONDITIONS: { id: HealthConditionType; name: string; emoji: 
 function App() {
     const [activeTab, setActiveTab] = useState<ActiveTab>('TRIP_PLANNER');
     const [catalogManager] = useState(() => new ItemCatalogManager());
-    const [, setCatalogVersion] = useState<number>(0);
+    const [catalogVersion, setCatalogVersion] = useState<number>(0);
 
     const [destination, setDestination] = useState('');
     const [days, setDays] = useState(3);
@@ -35,7 +39,14 @@ function App() {
     const [mode, setMode] = useState<'SHARED' | 'INDEPENDENT'>('SHARED');
 
     const [result, setResult] = useState<{ people: Person[]; communityBox: Item[] } | null>(null);
+    const [weatherInfo, setWeatherInfo] = useState<{
+        data: WeatherData;
+        triggers: WeatherTriggers;
+        location: string;
+        date: string;
+    } | null>(null);
     const [loading, setLoading] = useState(false);
+    const [planError, setPlanError] = useState<string | null>(null);
     const [lastRequest, setLastRequest] = useState<string | null>(null);
     const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
@@ -51,27 +62,50 @@ function App() {
         targetName: string;
     } | null>(null);
 
+    // Collaboration & Real-time Cloud Sync State (Google Notizen Feel)
+    const [activeTripId, setActiveTripId] = useState<string | null>(null);
+    const [activeShareCode, setActiveShareCode] = useState<string | null>(null);
+    const [userName, setUserName] = useState<string>(() => {
+        return localStorage.getItem('trip_collaborator_name') || 'Michael';
+    });
+    const [isSavingToCloud, setIsSavingToCloud] = useState<boolean>(false);
+    const [isLiveSyncing, setIsLiveSyncing] = useState<boolean>(false);
+    const [isLoadModalOpen, setIsLoadModalOpen] = useState<boolean>(false);
+    const [lastSyncAuthor, setLastSyncAuthor] = useState<string>('');
+    const unsubscribeRef = useRef<(() => void) | null>(null);
+
+    const handleUpdateUserName = (newName: string) => {
+        setUserName(newName);
+        localStorage.setItem('trip_collaborator_name', newName);
+    };
+
     const addPerson = () => {
+        setPlanError(null);
+        setLastRequest(null);
         const newPerson: Person = {
             id: generateId(),
             name: `Person ${people.length + 1}`,
             type: 'ADULT',
             inventory: [],
             currentLoad: 0,
-            maxLoad: maxWeight,
+            maxLoad: maxWeight || 23000,
             healthConditions: []
         };
         setPeople([...people, newPerson]);
     };
 
     const updatePerson = (id: string, field: keyof Person, value: any) => {
+        setPlanError(null);
+        setLastRequest(null);
         setPeople(people.map(p => p.id === id ? { ...p, [field]: value } : p));
     };
 
     const togglePersonHealthCondition = (personId: string, condId: HealthConditionType) => {
+        setPlanError(null);
+        setLastRequest(null);
         setPeople(people.map(p => {
             if (p.id !== personId) return p;
-            const current = p.healthConditions || [];
+            const current = Array.isArray(p.healthConditions) ? p.healthConditions : [];
             const updated = current.includes(condId)
                 ? current.filter(c => c !== condId)
                 : [...current, condId];
@@ -80,12 +114,16 @@ function App() {
     };
 
     const toggleActivity = (actId: string) => {
+        setPlanError(null);
+        setLastRequest(null);
         setActivities(prev =>
             prev.includes(actId) ? prev.filter(id => id !== actId) : [...prev, actId]
         );
     };
 
     const loadTestData = () => {
+        setPlanError(null);
+        setLastRequest(null);
         setDestination('Reykjavik');
         setDays(7);
         setDate('2025-12-01');
@@ -100,17 +138,36 @@ function App() {
     };
 
     const handlePlan = async () => {
+        setPlanError(null);
+
+        const cleanDest = (destination || '').trim();
+        if (!cleanDest) {
+            setPlanError('Bitte gib ein Reiseziel an (z. B. „Mallorca“, „Reykjavik“ oder „Paris“).');
+            return;
+        }
+
+        if (!Array.isArray(people) || people.length === 0) {
+            setPlanError('Bitte füge mindestens eine reisende Person hinzu (Klick auf „+ Person hinzufügen“).');
+            return;
+        }
+
+        if (!days || days <= 0 || isNaN(days)) {
+            setPlanError('Bitte gib eine gültige Reisedauer von mindestens 1 Tag an.');
+            return;
+        }
+
         const engine = new PackingEngine();
         const weatherService = new WeatherService();
 
         const currentInputs = {
-            destination,
+            destination: cleanDest,
             days,
             people,
             activities,
             maxWeight,
             mode,
-            date
+            date,
+            catalogVersion
         };
 
         const currentRequestStr = JSON.stringify(currentInputs);
@@ -123,24 +180,47 @@ function App() {
         setLoading(true);
 
         try {
-            // Fetch weather triggers
+            // Fetch weather data and triggers
             const tripDate = new Date(date);
-            const triggers = await weatherService.getWeatherTriggers(destination, tripDate);
+            const weatherResult = await weatherService.getWeatherData(cleanDest, tripDate);
+            const triggers = weatherResult.triggers;
 
-            // CLONE people to avoid mutating state directly in PackingEngine
-            const peopleClone = people.map(p => ({
-                ...p,
-                inventory: [...p.inventory],
-                healthConditions: p.healthConditions ? [...p.healthConditions] : []
-            }));
+            const weatherInfoData = {
+                data: weatherResult.data,
+                triggers: weatherResult.triggers,
+                location: cleanDest,
+                date: date
+            };
+            setWeatherInfo(weatherInfoData);
+
+            // CLONE people safely: preserve ad-hoc custom items if any, but cleanly reset calculated inventory
+            const peopleClone: Person[] = people.map(p => {
+                const existingCustomItems = Array.isArray(p.inventory)
+                    ? p.inventory.filter(item => item && item.id && item.id.startsWith('adhoc_'))
+                    : [];
+                const initialLoad = existingCustomItems.reduce(
+                    (acc, item) => acc + ((item.weight || 0) * (item.quantity || 1)),
+                    0
+                );
+
+                return {
+                    id: p.id || generateId(),
+                    name: (p.name || '').trim() || 'Reisende(r)',
+                    type: p.type || 'ADULT',
+                    inventory: [...existingCustomItems],
+                    currentLoad: initialLoad,
+                    maxLoad: p.maxLoad || maxWeight || 23000,
+                    healthConditions: Array.isArray(p.healthConditions) ? [...p.healthConditions] : []
+                };
+            });
 
             const request: PackingRequest = {
-                destination,
+                destination: cleanDest,
                 days,
                 people: peopleClone,
-                activities,
+                activities: Array.isArray(activities) ? activities : [],
                 weatherTriggers: triggers,
-                transportLimit: maxWeight,
+                transportLimit: maxWeight || 23000,
                 mode,
                 customCatalog: catalogManager.getEnabled()
             };
@@ -149,18 +229,182 @@ function App() {
             setResult(res);
             setLastRequest(currentRequestStr);
 
-            // Initialize ChecklistManager with deterministic trip ID
-            const tripId = `${destination.toLowerCase().replace(/\s+/g, '_')}_${date}_${days}_${activities.slice().sort().join('-')}`;
+            // Initialize ChecklistManager with deterministic trip ID or active trip ID
+            const tripId = activeTripId || `${cleanDest.toLowerCase().replace(/\s+/g, '_')}_${date}_${days}_${(activities || []).slice().sort().join('-')}`;
             const manager = new ChecklistManager(tripId);
             manager.load();
             setChecklistManager(manager);
             setPackedVersion(v => v + 1);
-        } catch (error) {
+
+            // If active trip is in cloud, auto-save updated generation
+            if (activeTripId && activeShareCode) {
+                CollaborativeTripService.saveTrip({
+                    id: activeTripId,
+                    shareCode: activeShareCode,
+                    destination: cleanDest,
+                    date,
+                    days,
+                    mode,
+                    maxWeight,
+                    activities,
+                    people: res.people,
+                    communityBox: res.communityBox,
+                    packedMap: manager.getAllStates(),
+                    weatherInfo: weatherInfoData,
+                    lastUpdatedBy: userName,
+                    updatedAt: new Date().toISOString()
+                }, userName).catch(err => {
+                    console.error("Error auto-updating cloud trip after plan update:", err);
+                });
+            }
+        } catch (error: any) {
             console.error("Error generating packing plan:", error);
+            const msg = error?.message || 'Unerwarteter Fehler';
+            setPlanError(`Beim Berechnen der Packliste ist ein Fehler aufgetreten: ${msg}`);
         } finally {
             setLoading(false);
         }
     };
+
+    // Real-time Cloud Save & Sync Handlers (Google Notizen Collaboration)
+    const handleSaveTripToCloud = async () => {
+        if (!result) return;
+        setIsSavingToCloud(true);
+        try {
+            const tripIdToUse = activeTripId || `trip_${destination.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
+            const shareCodeToUse = activeShareCode || generateShareCode(destination);
+            const currentPackedStates = checklistManager ? checklistManager.getAllStates() : {};
+
+            const tripPayload: CollaborativeTripData = {
+                id: tripIdToUse,
+                shareCode: shareCodeToUse,
+                destination,
+                date,
+                days,
+                mode,
+                maxWeight,
+                activities,
+                people: result.people,
+                communityBox: result.communityBox,
+                packedMap: currentPackedStates,
+                weatherInfo,
+                lastUpdatedBy: userName,
+                updatedAt: new Date().toISOString()
+            };
+
+            await CollaborativeTripService.saveTrip(tripPayload, userName);
+            setActiveTripId(tripIdToUse);
+            setActiveShareCode(shareCodeToUse);
+            setIsLiveSyncing(true);
+
+            // Update URL search query without full reload
+            if (typeof window !== 'undefined' && window.history) {
+                const newUrl = `${window.location.pathname}?trip=${shareCodeToUse}`;
+                window.history.replaceState(null, '', newUrl);
+            }
+
+            // Start listening for changes made on other devices (e.g. wife's phone/laptop)
+            setupRealtimeSubscription(tripIdToUse);
+        } catch (error) {
+            console.error('Error saving trip to cloud:', error);
+        } finally {
+            setIsSavingToCloud(false);
+        }
+    };
+
+    const setupRealtimeSubscription = useCallback((tripId: string) => {
+        if (unsubscribeRef.current) {
+            unsubscribeRef.current();
+        }
+
+        const unsub = CollaborativeTripService.subscribeToTrip(
+            tripId,
+            (syncedTrip) => {
+                // If updated by someone else, sync the packed state & people inventory smoothly
+                if (syncedTrip.lastUpdatedBy !== userName) {
+                    setLastSyncAuthor(syncedTrip.lastUpdatedBy);
+                }
+
+                if (checklistManager && syncedTrip.packedMap) {
+                    checklistManager.setAllStates(syncedTrip.packedMap);
+                    setPackedVersion(v => v + 1);
+                }
+
+                // If items were added or modified on another device
+                if (syncedTrip.people && syncedTrip.communityBox) {
+                    setResult({
+                        people: syncedTrip.people,
+                        communityBox: syncedTrip.communityBox
+                    });
+                }
+            },
+            (err) => console.error('Subscription error:', err)
+        );
+
+        unsubscribeRef.current = unsub;
+        setIsLiveSyncing(true);
+    }, [userName, checklistManager]);
+
+    // Handle loading a trip from cloud (selected by user or URL parameter)
+    const handleSelectTripFromCloud = (trip: CollaborativeTripData) => {
+        setDestination(trip.destination);
+        setDate(trip.date || new Date().toISOString().split('T')[0]);
+        setDays(trip.days || 3);
+        setMode(trip.mode || 'SHARED');
+        setMaxWeight(trip.maxWeight || 23000);
+        setActivities(trip.activities || []);
+        if (trip.weatherInfo) {
+            setWeatherInfo(trip.weatherInfo);
+        }
+
+        setPeople(trip.people || []);
+        setResult({
+            people: trip.people || [],
+            communityBox: trip.communityBox || []
+        });
+
+        // Initialize checklist manager with synced states
+        const manager = new ChecklistManager(trip.id);
+        manager.setAllStates(trip.packedMap || {});
+        setChecklistManager(manager);
+        setPackedVersion(v => v + 1);
+
+        setActiveTripId(trip.id);
+        setActiveShareCode(trip.shareCode);
+        setIsLiveSyncing(true);
+
+        // Update URL
+        if (typeof window !== 'undefined' && window.history && trip.shareCode) {
+            const newUrl = `${window.location.pathname}?trip=${trip.shareCode}`;
+            window.history.replaceState(null, '', newUrl);
+        }
+
+        // Subscribe to live updates
+        setupRealtimeSubscription(trip.id);
+    };
+
+    // Auto-load trip if "?trip=CODE" is in URL (e.g. when opened via link on phone/second computer)
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const params = new URLSearchParams(window.location.search);
+            const tripParam = params.get('trip');
+            if (tripParam) {
+                CollaborativeTripService.loadTripByCodeOrId(tripParam)
+                    .then(found => {
+                        if (found) {
+                            handleSelectTripFromCloud(found);
+                        }
+                    })
+                    .catch(e => console.error('Error loading trip from URL param:', e));
+            }
+        }
+
+        return () => {
+            if (unsubscribeRef.current) {
+                unsubscribeRef.current();
+            }
+        };
+    }, []);
 
     // Ad-hoc item manipulation
     const handleAddAdHocItem = (
@@ -179,21 +423,47 @@ function App() {
             quantity: itemData.quantity
         };
 
+        let updatedPeople = result.people;
+        let updatedCommunity = result.communityBox;
+
         if (adHocModal.targetType === 'PERSON') {
-            const updatedPeople = result.people.map(p => {
+            updatedPeople = result.people.map(p => {
                 if (p.id !== adHocModal.targetId) return p;
+                const safeInv = Array.isArray(p.inventory) ? p.inventory : [];
                 return {
                     ...p,
-                    inventory: [...p.inventory, newItem],
-                    currentLoad: p.currentLoad + (newItem.weight * newItem.quantity)
+                    inventory: [...safeInv, newItem],
+                    currentLoad: (p.currentLoad || 0) + ((newItem.weight || 0) * (newItem.quantity || 1))
                 };
             });
             setResult({ ...result, people: updatedPeople });
         } else {
+            const safeCommunity = Array.isArray(result.communityBox) ? result.communityBox : [];
+            updatedCommunity = [...safeCommunity, newItem];
             setResult({
                 ...result,
-                communityBox: [...result.communityBox, newItem]
+                communityBox: updatedCommunity
             });
+        }
+
+        // If cloud synced, persist change immediately
+        if (activeTripId && activeShareCode) {
+            CollaborativeTripService.saveTrip({
+                id: activeTripId,
+                shareCode: activeShareCode,
+                destination,
+                date,
+                days,
+                mode,
+                maxWeight,
+                activities,
+                people: updatedPeople,
+                communityBox: updatedCommunity,
+                packedMap: checklistManager ? checklistManager.getAllStates() : {},
+                weatherInfo,
+                lastUpdatedBy: userName,
+                updatedAt: new Date().toISOString()
+            }, userName).catch(console.error);
         }
 
         if (saveToCatalog) {
@@ -213,23 +483,49 @@ function App() {
 
     const handleRemoveItem = (targetType: 'PERSON' | 'COMMUNITY', targetId: string, itemId: string) => {
         if (!result) return;
+        let updatedPeople = result.people;
+        let updatedCommunity = result.communityBox;
+
         if (targetType === 'PERSON') {
-            const updatedPeople = result.people.map(p => {
+            updatedPeople = (result.people || []).map(p => {
                 if (p.id !== targetId) return p;
-                const targetItem = p.inventory.find(i => i.id === itemId);
-                const weightLoss = targetItem ? targetItem.weight * targetItem.quantity : 0;
+                const safeInv = Array.isArray(p.inventory) ? p.inventory : [];
+                const targetItem = safeInv.find(i => i.id === itemId);
+                const weightLoss = targetItem ? (targetItem.weight || 0) * (targetItem.quantity || 1) : 0;
                 return {
                     ...p,
-                    inventory: p.inventory.filter(i => i.id !== itemId),
-                    currentLoad: Math.max(0, p.currentLoad - weightLoss)
+                    inventory: safeInv.filter(i => i.id !== itemId),
+                    currentLoad: Math.max(0, (p.currentLoad || 0) - weightLoss)
                 };
             });
             setResult({ ...result, people: updatedPeople });
         } else {
+            const safeCommunity = Array.isArray(result.communityBox) ? result.communityBox : [];
+            updatedCommunity = safeCommunity.filter(i => i.id !== itemId);
             setResult({
                 ...result,
-                communityBox: result.communityBox.filter(i => i.id !== itemId)
+                communityBox: updatedCommunity
             });
+        }
+
+        // If cloud synced, update remote
+        if (activeTripId && activeShareCode) {
+            CollaborativeTripService.saveTrip({
+                id: activeTripId,
+                shareCode: activeShareCode,
+                destination,
+                date,
+                days,
+                mode,
+                maxWeight,
+                activities,
+                people: updatedPeople,
+                communityBox: updatedCommunity,
+                packedMap: checklistManager ? checklistManager.getAllStates() : {},
+                weatherInfo,
+                lastUpdatedBy: userName,
+                updatedAt: new Date().toISOString()
+            }, userName).catch(console.error);
         }
     };
 
@@ -243,8 +539,15 @@ function App() {
 
     const toggleItem = (ownerId: string, itemId: string) => {
         if (!checklistManager) return;
-        checklistManager.toggleItem(getItemKey(ownerId, itemId));
+        const key = getItemKey(ownerId, itemId);
+        const newState = checklistManager.toggleItem(key);
         setPackedVersion(v => v + 1);
+
+        // Immediate background sync to Firestore for real-time responsiveness
+        if (activeTripId) {
+            CollaborativeTripService.updateItemPackedState(activeTripId, key, newState, userName)
+                .catch(console.error);
+        }
     };
 
     // Progress calculations
@@ -257,10 +560,12 @@ function App() {
         let packed = 0;
         const personStats: Record<string, { total: number; packed: number; percent: number }> = {};
 
-        result.people.forEach(p => {
-            let pTotal = p.inventory.length;
+        const safePeople = Array.isArray(result.people) ? result.people : [];
+        safePeople.forEach(p => {
+            const safeInv = Array.isArray(p.inventory) ? p.inventory : [];
+            let pTotal = safeInv.length;
             let pPacked = 0;
-            p.inventory.forEach(item => {
+            safeInv.forEach(item => {
                 const key = getItemKey(p.id, item.id);
                 if (checklistManager.isPacked(key)) {
                     pPacked++;
@@ -275,9 +580,10 @@ function App() {
             };
         });
 
-        let cTotal = result.communityBox.length;
+        const safeCommunity = Array.isArray(result.communityBox) ? result.communityBox : [];
+        let cTotal = safeCommunity.length;
         let cPacked = 0;
-        result.communityBox.forEach(item => {
+        safeCommunity.forEach(item => {
             const key = getItemKey('community', item.id);
             if (checklistManager.isPacked(key)) {
                 cPacked++;
@@ -353,6 +659,32 @@ function App() {
                 </div>
             </header>
 
+            {/* Collaboration & Live Sync Bar (Google Notizen Feel) */}
+            <CollaborationBar
+                trip={result ? {
+                    id: activeTripId || '',
+                    shareCode: activeShareCode || '',
+                    destination,
+                    date,
+                    days,
+                    mode,
+                    maxWeight,
+                    activities,
+                    people: result.people,
+                    communityBox: result.communityBox,
+                    packedMap: checklistManager ? checklistManager.getAllStates() : {},
+                    weatherInfo,
+                    lastUpdatedBy: lastSyncAuthor || userName,
+                    updatedAt: new Date().toISOString()
+                } : null}
+                currentUserName={userName}
+                onChangeUserName={handleUpdateUserName}
+                onSaveToCloud={handleSaveTripToCloud}
+                onOpenLoadModal={() => setIsLoadModalOpen(true)}
+                isSaving={isSavingToCloud}
+                isLiveSyncing={isLiveSyncing}
+            />
+
             {activeTab === 'CATALOG' ? (
                 <CatalogManagerView
                     catalogManager={catalogManager}
@@ -360,6 +692,25 @@ function App() {
                 />
             ) : (
                 <>
+                    {planError && (
+                        <div className="error-banner" role="alert">
+                            <div className="error-banner-content">
+                                <span className="error-banner-icon">⚠️</span>
+                                <div className="error-banner-text">
+                                    <strong>Hinweis:</strong> {planError}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                className="error-banner-close"
+                                onClick={() => setPlanError(null)}
+                                title="Schließen"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+
                     <div className="wizard-container">
                 <h2>Reise konfigurieren</h2>
 
@@ -517,6 +868,17 @@ function App() {
                             </div>
                         </div>
 
+                        {/* Weather Data Summary Section */}
+                        {weatherInfo && (
+                            <WeatherDashboardSummary
+                                destination={weatherInfo.location || destination}
+                                date={weatherInfo.date || date}
+                                days={days}
+                                weatherData={weatherInfo.data}
+                                triggers={weatherInfo.triggers}
+                            />
+                        )}
+
                         {/* Global Progress Bar */}
                         <div className="progress-bar-container">
                             <div
@@ -564,9 +926,9 @@ function App() {
                     </div>
 
                     {/* People Cards */}
-                    {result.people.map(p => {
+                    {(result.people || []).map(p => {
                         const pStat = stats.personStats[p.id] || { total: 0, packed: 0, percent: 0 };
-                        const visibleItems = p.inventory.filter(item => filterItem(p.id, item.id));
+                        const visibleItems = (p.inventory || []).filter(item => filterItem(p.id, item.id));
 
                         return (
                             <div key={p.id} className="person-card">
@@ -605,7 +967,7 @@ function App() {
                                                         <span className="item-name">
                                                             {item.quantity}x {item.name} {badge}{healthBadge}
                                                         </span>
-                                                        <span className="item-weight">{item.weight * item.quantity}g</span>
+                                                        <span className="item-weight">{(item.weight || 0) * (item.quantity || 1)}g</span>
                                                     </span>
                                                     <button
                                                         className="item-delete-btn"
@@ -623,7 +985,7 @@ function App() {
                                     )}
                                 </div>
                                 <div className="card-footer">
-                                    <span>Gewicht: <strong>{(p.currentLoad / 1000).toFixed(1)} kg</strong> / {(p.maxLoad / 1000).toFixed(1)} kg</span>
+                                    <span>Gewicht: <strong>{(((p.currentLoad || 0)) / 1000).toFixed(1)} kg</strong> / {(((p.maxLoad || maxWeight || 23000)) / 1000).toFixed(1)} kg</span>
                                     <button
                                         className="small-btn add-adhoc-btn"
                                         onClick={() => setAdHocModal({
@@ -640,7 +1002,7 @@ function App() {
                     })}
 
                     {/* Community Box */}
-                    {result.communityBox.length > 0 && (
+                    {Array.isArray(result.communityBox) && result.communityBox.length > 0 && (
                         <div className="community-box">
                             <div className="card-header">
                                 <div className="card-title-group">
@@ -686,7 +1048,7 @@ function App() {
                                                     <span className="item-name">
                                                         {item.quantity}x {item.name} {badge}{healthBadge}
                                                     </span>
-                                                    <span className="item-weight">{item.weight * item.quantity}g</span>
+                                                    <span className="item-weight">{(item.weight || 0) * (item.quantity || 1)}g</span>
                                                 </span>
                                                 <button
                                                     className="item-delete-btn"
@@ -714,10 +1076,18 @@ function App() {
                 <AddAdHocItemModal
                     targetName={adHocModal.targetName}
                     catalogItems={catalogManager.getEnabled()}
+                    days={days}
+                    peopleCount={people.length}
                     onClose={() => setAdHocModal(null)}
                     onAdd={handleAddAdHocItem}
                 />
             )}
+
+            <LoadTripModal
+                isOpen={isLoadModalOpen}
+                onClose={() => setIsLoadModalOpen(false)}
+                onSelectTrip={handleSelectTripFromCloud}
+            />
         </div>
     );
 }

@@ -1,13 +1,30 @@
 import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 
-dotenv.config();
+const getEnv = (key: string) => {
+    try {
+        const getMeta = new Function('try { return import.meta.env; } catch (e) { return undefined; }');
+        const meta = getMeta();
+        if (meta && meta[key]) return meta[key];
+    } catch (e) {}
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env[key]) {
+            return process.env[key];
+        }
+    } catch (e) {}
+    return '';
+};
 
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_KEY || '';
+const supabaseUrl = getEnv('VITE_SUPABASE_URL') || getEnv('SUPABASE_URL') || '';
+const supabaseKey = getEnv('VITE_SUPABASE_KEY') || getEnv('SUPABASE_KEY') || '';
 
-if (!supabaseUrl || !supabaseKey) {
-    console.warn('Supabase URL or Key not found in environment variables.');
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
+
+if (!isSupabaseConfigured) {
+    console.warn('Supabase URL or Key not found in environment variables. Running in local fallback mode.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+// Use placeholder credentials to prevent createClient from throwing if unconfigured
+export const supabase = isSupabaseConfigured
+    ? createClient(supabaseUrl, supabaseKey)
+    : createClient('https://placeholder.supabase.co', 'placeholder-anon-key');
+

@@ -66,6 +66,22 @@ export class ChecklistManager {
         return this.items.get(itemId) || false;
     }
 
+    public getAllStates(): Record<string, boolean> {
+        const result: Record<string, boolean> = {};
+        this.items.forEach((val, key) => {
+            result[key] = val;
+        });
+        return result;
+    }
+
+    public setAllStates(states: Record<string, boolean>): void {
+        this.items.clear();
+        Object.entries(states).forEach(([key, val]) => {
+            this.items.set(key, val);
+        });
+        this.save();
+    }
+
     /**
      * Returns percent complete (0-100) based on provided total count or internal tracked items.
      * Note: Internal items map only grows as we interact with items. 

@@ -1,18 +1,8 @@
-# Dependencies
-node_modules
-dist
-dist-ssr
-coverage
-*.local
-
-# Logs
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
 *.log
-
-# Environment
-.env
-.env.*
+.env*
 !.env.example
-
-# Editor
-.vscode
-.idea
