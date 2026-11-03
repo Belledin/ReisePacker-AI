@@ -10,6 +10,7 @@ import { WeatherDashboardSummary } from './components/WeatherDashboardSummary';
 import { CollaborationBar } from './components/CollaborationBar';
 import { LoadTripModal } from './components/LoadTripModal';
 import { CollaborativeTripService, CollaborativeTripData, generateShareCode } from './services/CollaborativeTripService';
+import { auth, loginWithGoogle, logoutUser, onAuthStateChanged, User } from './lib/firebaseClient';
 import { InstallPromptModal } from './components/InstallPromptModal';
 
 // Simple unique ID generator
@@ -66,9 +67,40 @@ function App() {
     // Collaboration & Real-time Cloud Sync State (Google Notizen Feel)
     const [activeTripId, setActiveTripId] = useState<string | null>(null);
     const [activeShareCode, setActiveShareCode] = useState<string | null>(null);
+    const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [userName, setUserName] = useState<string>(() => {
         return localStorage.getItem('trip_collaborator_name') || 'Michael';
     });
+
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            setCurrentUser(user);
+            if (user?.displayName) {
+                setUserName(user.displayName);
+                localStorage.setItem('trip_collaborator_name', user.displayName);
+            }
+        });
+        return () => unsubscribe();
+    }, []);
+
+    const handleGoogleLogin = async () => {
+        try {
+            await loginWithGoogle();
+        } catch (error: any) {
+            console.error('Google login error:', error);
+            if (error?.code !== 'auth/popup-closed-by-user') {
+                alert('Anmeldung fehlgeschlagen. Bitte stelle sicher, dass Google Sign-in in der Firebase Console aktiviert ist.');
+            }
+        }
+    };
+
+    const handleLogout = async () => {
+        try {
+            await logoutUser();
+        } catch (error) {
+            console.error('Logout error:', error);
+        }
+    };
     const [isSavingToCloud, setIsSavingToCloud] = useState<boolean>(false);
     const [isLiveSyncing, setIsLiveSyncing] = useState<boolean>(false);
     const [isLoadModalOpen, setIsLoadModalOpen] = useState<boolean>(false);
@@ -293,7 +325,7 @@ function App() {
                 updatedAt: new Date().toISOString()
             };
 
-            await CollaborativeTripService.saveTrip(tripPayload, userName);
+            await CollaborativeTripService.saveTrip(tripPayload, userName, currentUser ? { uid: currentUser.uid, email: currentUser.email } : undefined);
             setActiveTripId(tripIdToUse);
             setActiveShareCode(shareCodeToUse);
             setIsLiveSyncing(true);
@@ -464,7 +496,7 @@ function App() {
                 weatherInfo,
                 lastUpdatedBy: userName,
                 updatedAt: new Date().toISOString()
-            }, userName).catch(console.error);
+            }, userName, currentUser ? { uid: currentUser.uid, email: currentUser.email } : undefined).catch(console.error);
         }
 
         if (saveToCatalog) {
@@ -642,24 +674,41 @@ function App() {
     return (
         <div className="app-container">
             <header className="app-header">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
-                    <div className="flex items-center gap-3">
+                <div className="header-top-row">
+                    <div className="header-title-group flex items-center gap-3">
                         <img
                             src="/apple-touch-icon.png"
                             alt="ReisePacker Icon"
                             className="w-11 h-11 rounded-xl shadow-md border border-blue-400/20"
                         />
                         <div>
-                            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white m-0 flex items-center gap-2">
-                                ReisePacker AI
-                            </h1>
-                            <p className="subtitle text-xs text-slate-500 dark:text-slate-400 m-0">
-                                Smarte Packlisten mit Wetter- & Gewichtsanalyse
-                            </p>
+                            <h1>ReisePacker AI 🧳</h1>
+                            <p className="subtitle">Smarte Packlisten mit Wetter- & Gewichtsanalyse</p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                    <div className="header-auth-section flex items-center gap-2">
                         <InstallPromptModal />
+                        {currentUser ? (
+                            <div className="user-profile-badge">
+                                {currentUser.photoURL && (
+                                    <img src={currentUser.photoURL} alt="Avatar" className="user-avatar-img" />
+                                )}
+                                <span className="user-name-label">{currentUser.displayName || currentUser.email}</span>
+                                <button type="button" onClick={handleLogout} className="btn-auth-logout" title="Abmelden">
+                                    Abmelden
+                                </button>
+                            </div>
+                        ) : (
+                            <button type="button" onClick={handleGoogleLogin} className="btn-auth-login" id="btn-header-google-login">
+                                <svg width="16" height="16" viewBox="0 0 24 24" className="google-icon">
+                                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z"/>
+                                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z"/>
+                                    <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                                </svg>
+                                <span>Mit Google anmelden</span>
+                            </button>
+                        )}
                     </div>
                 </div>
                 <div className="nav-tabs mt-2">
@@ -1106,6 +1155,8 @@ function App() {
                 isOpen={isLoadModalOpen}
                 onClose={() => setIsLoadModalOpen(false)}
                 onSelectTrip={handleSelectTripFromCloud}
+                currentUser={currentUser}
+                onLogin={handleGoogleLogin}
             />
         </div>
     );
