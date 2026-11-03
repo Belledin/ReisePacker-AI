@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CatalogItem, calculateCatalogItemQuantity } from '../logic/defaultCatalog';
 import { Category } from '../logic/PackingEngine';
 import { CATEGORY_LABELS } from './CatalogManagerView';
+import { TagSelector } from './TagSelector';
 
 interface AddAdHocItemModalProps {
     targetName: string; // e.g. "Papa" or "Community Box"
@@ -34,6 +35,7 @@ export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
     const [quantity, setQuantity] = useState(1);
     const [weight, setWeight] = useState(100);
     const [category, setCategory] = useState<Category>('misc');
+    const [customTags, setCustomTags] = useState<string[]>([]);
     const [saveToCatalog, setSaveToCatalog] = useState(false);
     const [appliedRuleText, setAppliedRuleText] = useState<string | null>(null);
 
@@ -78,7 +80,7 @@ export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
         e.preventDefault();
         if (!name.trim()) return;
 
-        let tags: string[] = ['custom'];
+        let tags: string[] = customTags.length > 0 ? customTags : ['custom'];
         if (selectedCatalogId !== 'CUSTOM') {
             const found = catalogItems.find(i => i.id === selectedCatalogId);
             if (found) {
@@ -182,15 +184,25 @@ export const AddAdHocItemModal: React.FC<AddAdHocItemModalProps> = ({
                     </div>
 
                     {selectedCatalogId === 'CUSTOM' && (
-                        <div className="form-checkbox-row">
-                            <label className="checkbox-label">
-                                <input
-                                    type="checkbox"
-                                    checked={saveToCatalog}
-                                    onChange={(e) => setSaveToCatalog(e.target.checked)}
+                        <div className="space-y-3 pt-1">
+                            <div className="form-checkbox-row">
+                                <label className="checkbox-label">
+                                    <input
+                                        type="checkbox"
+                                        checked={saveToCatalog}
+                                        onChange={(e) => setSaveToCatalog(e.target.checked)}
+                                    />
+                                    <span>Diesen Gegenstand dauerhaft im Katalog für zukünftige Reisen speichern</span>
+                                </label>
+                            </div>
+
+                            <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800">
+                                <TagSelector
+                                    selectedTags={customTags}
+                                    onChange={setCustomTags}
+                                    showHelpText={true}
                                 />
-                                <span>Diesen Gegenstand dauerhaft im Katalog für zukünftige Reisen speichern</span>
-                            </label>
+                            </div>
                         </div>
                     )}
 

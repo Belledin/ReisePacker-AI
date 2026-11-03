@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CatalogItem, QuantityRuleType } from '../logic/defaultCatalog';
 import { ItemCatalogManager } from '../logic/ItemCatalogManager';
 import { Category } from '../logic/PackingEngine';
+import { TagSelector } from './TagSelector';
 
 interface CatalogManagerViewProps {
     catalogManager: ItemCatalogManager;
@@ -41,7 +42,7 @@ export const CatalogManagerView: React.FC<CatalogManagerViewProps> = ({
     const [formRuleType, setFormRuleType] = useState<QuantityRuleType>('FIXED');
     const [formRuleValue, setFormRuleValue] = useState<number>(1);
     const [formDefaultQuantity, setFormDefaultQuantity] = useState<number>(1);
-    const [formTags, setFormTags] = useState('');
+    const [formSelectedTags, setFormSelectedTags] = useState<string[]>(['base']);
 
     // Import state
     const [importModalOpen, setImportModalOpen] = useState(false);
@@ -72,7 +73,7 @@ export const CatalogManagerView: React.FC<CatalogManagerViewProps> = ({
         setFormRuleType('FIXED');
         setFormRuleValue(1);
         setFormDefaultQuantity(1);
-        setFormTags('base');
+        setFormSelectedTags(['base']);
         setIsFormOpen(true);
     };
 
@@ -84,7 +85,7 @@ export const CatalogManagerView: React.FC<CatalogManagerViewProps> = ({
         setFormRuleType(item.ruleType);
         setFormRuleValue(item.ruleValue || 1);
         setFormDefaultQuantity(item.defaultQuantity);
-        setFormTags(item.tags.join(', '));
+        setFormSelectedTags(Array.isArray(item.tags) ? [...item.tags] : []);
         setIsFormOpen(true);
     };
 
@@ -92,10 +93,7 @@ export const CatalogManagerView: React.FC<CatalogManagerViewProps> = ({
         e.preventDefault();
         if (!formName.trim()) return;
 
-        const tags = formTags
-            .split(',')
-            .map(t => t.trim().toLowerCase())
-            .filter(t => t.length > 0);
+        const tags = formSelectedTags.map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
 
         if (editingItemId) {
             catalogManager.updateItem(editingItemId, {
@@ -429,16 +427,10 @@ export const CatalogManagerView: React.FC<CatalogManagerViewProps> = ({
                             </div>
 
                             <div className="form-group">
-                                <label>Tags (kommagetrennt)</label>
-                                <input
-                                    type="text"
-                                    value={formTags}
-                                    onChange={(e) => setFormTags(e.target.value)}
-                                    placeholder="z. B. base, rain, strand, foto"
+                                <TagSelector
+                                    selectedTags={formSelectedTags}
+                                    onChange={setFormSelectedTags}
                                 />
-                                <small className="hint-text">
-                                    Hinweis: 'rain' wird nur bei Regen eingepackt, 'cold' nur bei Kälte.
-                                </small>
                             </div>
 
                             <div className="modal-footer">
