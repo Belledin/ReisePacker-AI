@@ -157,6 +157,7 @@ function App() {
             inventory: [],
             currentLoad: 0,
             maxLoad: maxWeight || 23000,
+            luggageWeight: 3500, // 3.5 kg standard empty suitcase
             healthConditions: []
         };
         setPeople([...people, newPerson]);
@@ -165,7 +166,36 @@ function App() {
     const updatePerson = (id: string, field: keyof Person, value: any) => {
         setPlanError(null);
         setLastRequest(null);
-        setPeople(people.map(p => p.id === id ? { ...p, [field]: value } : p));
+        const updatedPeople = people.map(p => p.id === id ? { ...p, [field]: value } : p);
+        setPeople(updatedPeople);
+
+        // Also sync update to result.people if packing list is already generated
+        if (result && Array.isArray(result.people)) {
+            const updatedResultPeople = result.people.map(p => p.id === id ? { ...p, [field]: value } : p);
+            setResult({
+                ...result,
+                people: updatedResultPeople
+            });
+
+            if (activeTripId && activeShareCode) {
+                CollaborativeTripService.saveTrip({
+                    id: activeTripId,
+                    shareCode: activeShareCode,
+                    destination,
+                    date,
+                    days,
+                    mode,
+                    maxWeight,
+                    activities,
+                    people: updatedResultPeople,
+                    communityBox: result.communityBox,
+                    packedMap: checklistManager ? checklistManager.getAllStates() : {},
+                    weatherInfo,
+                    lastUpdatedBy: userName,
+                    updatedAt: new Date().toISOString()
+                }, userName, currentUser ? { uid: currentUser.uid, email: currentUser.email } : undefined).catch(console.error);
+            }
+        }
     };
 
     const togglePersonHealthCondition = (personId: string, condId: HealthConditionType) => {
@@ -198,10 +228,10 @@ function App() {
         setActivities(['hiking', 'sightseeing']);
 
         setPeople([
-            { id: generateId(), name: 'Papa', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000, healthConditions: ['daily_meds', 'allergies'] },
-            { id: generateId(), name: 'Mama', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000, healthConditions: ['contact_lenses'] },
-            { id: generateId(), name: 'Teenager', type: 'TEEN', inventory: [], currentLoad: 0, maxLoad: 23000, healthConditions: ['asthma'] },
-            { id: generateId(), name: 'Kind', type: 'CHILD', inventory: [], currentLoad: 0, maxLoad: 15000, healthConditions: ['motion_sickness'] }
+            { id: generateId(), name: 'Papa', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000, luggageWeight: 3800, healthConditions: ['daily_meds', 'allergies'] },
+            { id: generateId(), name: 'Mama', type: 'ADULT', inventory: [], currentLoad: 0, maxLoad: 23000, luggageWeight: 3500, healthConditions: ['contact_lenses'] },
+            { id: generateId(), name: 'Teenager', type: 'TEEN', inventory: [], currentLoad: 0, maxLoad: 23000, luggageWeight: 2600, healthConditions: ['asthma'] },
+            { id: generateId(), name: 'Kind', type: 'CHILD', inventory: [], currentLoad: 0, maxLoad: 15000, luggageWeight: 1400, healthConditions: ['motion_sickness'] }
         ]);
     };
 
@@ -891,6 +921,30 @@ function App() {
                             onChange={(e) => setDays(Math.max(1, Number(e.target.value)))}
                         />
                     </div>
+
+                    <div className="form-group flex-1">
+                        <label>Standard-Gepäcklimit</label>
+                        <div className="flex items-center gap-1.5">
+                            <input
+                                type="number"
+                                min="5"
+                                max="45"
+                                step="1"
+                                value={((maxWeight || 23000) / 1000).toFixed(0)}
+                                onChange={(e) => {
+                                    const val = Math.max(5, parseFloat(e.target.value) || 23) * 1000;
+                                    setMaxWeight(val);
+                                    // Update people who don't have custom limit
+                                    setPeople(people.map(p => ({
+                                        ...p,
+                                        maxLoad: val
+                                    })));
+                                }}
+                                className="w-full"
+                            />
+                            <span className="text-xs text-slate-400 font-semibold">kg</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="form-group">
@@ -970,6 +1024,66 @@ function App() {
                                     ✕
                                 </button>
                             </div>
+
+                            {/* Luggage / Koffer-Eigengewicht & Limit Row */}
+                            <div className="luggage-config-row mt-2.5 p-2 bg-slate-800/40 rounded-xl border border-slate-700/60 flex flex-wrap items-center gap-2 text-xs">
+                                <span className="font-semibold text-slate-200 flex items-center gap-1">
+                                    🧳 Koffer / Gepäck:
+                                </span>
+                                <div className="flex items-center gap-1">
+                                    <span className="text-slate-400">Leergewicht:</span>
+                                    <input
+                                        type="number"
+                                        step="0.1"
+                                        min="0"
+                                        max="15"
+                                        value={((p.luggageWeight ?? 3500) / 1000).toFixed(1)}
+                                        onChange={(e) => updatePerson(p.id, 'luggageWeight', Math.round(Math.max(0, parseFloat(e.target.value) || 0) * 1000))}
+                                        className="w-16 px-1.5 py-0.5 text-xs text-center font-bold bg-slate-900 border border-slate-700 rounded text-indigo-300"
+                                    />
+                                    <span className="text-slate-400 font-medium">kg</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        type="button"
+                                        className="px-1.5 py-0.5 rounded text-[10px] bg-slate-700/70 hover:bg-slate-700 text-slate-300 border border-slate-600/50"
+                                        onClick={() => updatePerson(p.id, 'luggageWeight', 1000)}
+                                        title="Rucksack (~1.0 kg)"
+                                    >
+                                        🎒 1.0 kg
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="px-1.5 py-0.5 rounded text-[10px] bg-slate-700/70 hover:bg-slate-700 text-slate-300 border border-slate-600/50"
+                                        onClick={() => updatePerson(p.id, 'luggageWeight', 2500)}
+                                        title="Handgepäck Trolley (~2.5 kg)"
+                                    >
+                                        💼 2.5 kg
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="px-1.5 py-0.5 rounded text-[10px] bg-slate-700/70 hover:bg-slate-700 text-slate-300 border border-slate-600/50"
+                                        onClick={() => updatePerson(p.id, 'luggageWeight', 3800)}
+                                        title="Koffer Hartschale (~3.8 kg)"
+                                    >
+                                        🧳 3.8 kg
+                                    </button>
+                                </div>
+                                <div className="flex items-center gap-1.5 ml-auto">
+                                    <span className="text-slate-400">Max. Limit:</span>
+                                    <input
+                                        type="number"
+                                        step="0.5"
+                                        min="1"
+                                        max="50"
+                                        value={((p.maxLoad || maxWeight || 23000) / 1000).toFixed(0)}
+                                        onChange={(e) => updatePerson(p.id, 'maxLoad', Math.round(Math.max(1, parseFloat(e.target.value) || 23) * 1000))}
+                                        className="w-14 px-1.5 py-0.5 text-xs text-center font-bold bg-slate-900 border border-slate-700 rounded text-emerald-400"
+                                    />
+                                    <span className="text-slate-400 font-medium">kg</span>
+                                </div>
+                            </div>
+
                             <div className="health-section">
                                 <span className="health-section-label">💊 Gesundheit:</span>
                                 <div className="health-chips">
@@ -1151,10 +1265,45 @@ function App() {
                                         })
                                     )}
                                 </div>
-                                <div className="card-footer">
-                                    <span>Gewicht: <strong>{(((p.currentLoad || 0)) / 1000).toFixed(1)} kg</strong> / {(((p.maxLoad || maxWeight || 23000)) / 1000).toFixed(1)} kg</span>
+                                <div className="card-footer flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800 mt-3">
+                                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-slate-400">📦 Inhalt:</span>
+                                            <strong className="text-slate-200">{((p.currentLoad || 0) / 1000).toFixed(1)} kg</strong>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-slate-400">🧳 Koffer (leer):</span>
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                min="0"
+                                                max="15"
+                                                value={((p.luggageWeight ?? 3500) / 1000).toFixed(1)}
+                                                onChange={(e) => updatePerson(p.id, 'luggageWeight', Math.round(Math.max(0, parseFloat(e.target.value) || 0) * 1000))}
+                                                className="w-14 px-1 py-0.5 text-xs text-center font-bold bg-slate-950 border border-slate-700 rounded text-indigo-300"
+                                                title="Koffer-Leergewicht anpassen"
+                                            />
+                                            <span className="text-slate-400 font-medium">kg</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-slate-400">⚖️ Gesamt:</span>
+                                            <strong className={`font-bold ${((p.currentLoad || 0) + (p.luggageWeight ?? 3500)) > (p.maxLoad || maxWeight || 23000) ? 'text-rose-400 font-extrabold' : 'text-emerald-400'}`}>
+                                                {(((p.currentLoad || 0) + (p.luggageWeight ?? 3500)) / 1000).toFixed(1)} kg
+                                            </strong>
+                                            <span className="text-slate-500">/ {((p.maxLoad || maxWeight || 23000) / 1000).toFixed(0)} kg</span>
+                                        </div>
+                                        {((p.currentLoad || 0) + (p.luggageWeight ?? 3500)) > (p.maxLoad || maxWeight || 23000) ? (
+                                            <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold text-[11px] animate-pulse">
+                                                ⚠️ +{((((p.currentLoad || 0) + (p.luggageWeight ?? 3500)) - (p.maxLoad || maxWeight || 23000)) / 1000).toFixed(1)} kg zu schwer!
+                                            </span>
+                                        ) : (
+                                            <span className="text-[11px] text-slate-400">
+                                                (noch {(((p.maxLoad || maxWeight || 23000) - (p.currentLoad || 0) - (p.luggageWeight ?? 3500)) / 1000).toFixed(1)} kg frei)
+                                            </span>
+                                        )}
+                                    </div>
                                     <button
-                                        className="small-btn add-adhoc-btn"
+                                        className="small-btn add-adhoc-btn self-start sm:self-auto"
                                         onClick={() => setAdHocModal({
                                             targetType: 'PERSON',
                                             targetId: p.id,
@@ -1231,6 +1380,24 @@ function App() {
                                         );
                                     })
                                 )}
+                            </div>
+                            <div className="card-footer flex items-center justify-between p-3 bg-slate-900/60 rounded-xl border border-slate-800 mt-3">
+                                <div className="text-xs text-slate-300">
+                                    <span>📦 Gesamtgewicht Gemeinschaftsbox: </span>
+                                    <strong className="text-indigo-300 font-bold">
+                                        {(result.communityBox.reduce((sum, item) => sum + ((item.weight || 0) * (item.quantity || 1)), 0) / 1000).toFixed(1)} kg
+                                    </strong>
+                                </div>
+                                <button
+                                    className="small-btn add-adhoc-btn"
+                                    onClick={() => setAdHocModal({
+                                        targetType: 'COMMUNITY',
+                                        targetId: 'community',
+                                        targetName: 'Community Box'
+                                    })}
+                                >
+                                    ➕ Gegenstand
+                                </button>
                             </div>
                         </div>
                     )}

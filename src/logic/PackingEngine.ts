@@ -13,8 +13,9 @@ export interface Person {
     name: string;
     type: PersonType;
     inventory: Item[];
-    currentLoad: number; // in grams
-    maxLoad: number; // in grams (derived from transport limit)
+    currentLoad: number; // in grams (netto items weight)
+    maxLoad: number; // in grams (gross limit derived from transport limit, e.g. 23000)
+    luggageWeight?: number; // in grams (tare/empty weight of suitcase/bag, e.g. 3500g for 3.5kg)
     healthConditions?: HealthConditionType[];
 }
 
@@ -249,7 +250,8 @@ export class PackingEngine {
             for (const person of candidates) {
                 const totalWx = (item.weight || 0) * (item.quantity || 1);
                 const pLimit = person.maxLoad || limit || 23000;
-                if ((person.currentLoad || 0) + totalWx <= pLimit) {
+                const pTare = person.luggageWeight || 0;
+                if ((person.currentLoad || 0) + pTare + totalWx <= pLimit) {
                     if (!person.inventory) person.inventory = [];
                     person.inventory.push(item);
                     person.currentLoad = (person.currentLoad || 0) + totalWx;
