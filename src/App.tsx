@@ -10,7 +10,7 @@ import { WeatherDashboardSummary } from './components/WeatherDashboardSummary';
 import { CollaborationBar } from './components/CollaborationBar';
 import { LoadTripModal } from './components/LoadTripModal';
 import { CollaborativeTripService, CollaborativeTripData, generateShareCode } from './services/CollaborativeTripService';
-import { auth, loginWithGoogle, logoutUser, onAuthStateChanged, User } from './lib/firebaseClient';
+import { auth, loginWithGoogle, logoutUser, onAuthStateChanged, getRedirectResult, User } from './lib/firebaseClient';
 import { InstallPromptModal } from './components/InstallPromptModal';
 
 // Simple unique ID generator
@@ -73,6 +73,19 @@ function App() {
     });
 
     useEffect(() => {
+        // Handle redirect result if returning from mobile redirect login
+        getRedirectResult(auth).then((result) => {
+            if (result?.user) {
+                setCurrentUser(result.user);
+                if (result.user.displayName) {
+                    setUserName(result.user.displayName);
+                    localStorage.setItem('trip_collaborator_name', result.user.displayName);
+                }
+            }
+        }).catch((err) => {
+            console.error('Redirect sign-in error:', err);
+        });
+
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             setCurrentUser(user);
             if (user?.displayName) {
@@ -88,9 +101,31 @@ function App() {
             await loginWithGoogle();
         } catch (error: any) {
             console.error('Google login error:', error);
-            if (error?.code !== 'auth/popup-closed-by-user') {
-                alert('Anmeldung fehlgeschlagen. Bitte stelle sicher, dass Google Sign-in in der Firebase Console aktiviert ist.');
+            if (error?.code === 'auth/popup-closed-by-user') {
+                return;
             }
+
+            let message = 'Anmeldung fehlgeschlagen.';
+            const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'reisepacker.web.app';
+
+            if (error?.code === 'auth/unauthorized-domain') {
+                message = `Domain "${currentHost}" ist in Firebase noch nicht autorisiert!\n\n` +
+                          `So schaltest du sie frei:\n` +
+                          `1. Öffne Firebase Console -> Projekt "gen-lang-client-0620240836"\n` +
+                          `2. Gehe zu "Authentication" -> Reiter "Settings" (Einstellungen)\n` +
+                          `3. Scrolle zu "Autorisierte Domains"\n` +
+                          `4. Klicke "Domain hinzufügen" und trage "${currentHost}" ein.`;
+            } else if (error?.code === 'auth/operation-not-allowed') {
+                message = 'Google Sign-In ist in der Firebase Console noch nicht aktiviert.\n\n' +
+                          'Bitte in der Firebase Console unter Authentication -> Sign-in-Methode den Anbieter "Google" aktivieren.';
+            } else if (error?.code === 'auth/popup-blocked') {
+                message = 'Das Anmeldefenster wurde vom Smartphone-Browser blockiert.\n\n' +
+                          'Bitte Popups in den Browser-Einstellungen erlauben.';
+            } else if (error?.message) {
+                message = `Anmeldefehler (${error.code || 'Unbekannt'}):\n${error.message}`;
+            }
+
+            alert(message);
         }
     };
 
