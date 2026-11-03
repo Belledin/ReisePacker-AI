@@ -291,12 +291,27 @@ function App() {
             };
             setWeatherInfo(weatherInfoData);
 
+            // Preserve any ad-hoc items previously added in result.people or result.communityBox
+            const adhocItemsByPerson: Record<string, Item[]> = {};
+            if (result && Array.isArray(result.people)) {
+                result.people.forEach(rp => {
+                    const adhoc = (rp.inventory || []).filter(item => item && item.id && item.id.startsWith('adhoc_'));
+                    if (adhoc.length > 0) {
+                        adhocItemsByPerson[rp.id] = adhoc;
+                    }
+                });
+            }
+            const communityAdhoc = (result && Array.isArray(result.communityBox))
+                ? result.communityBox.filter(item => item && item.id && item.id.startsWith('adhoc_'))
+                : [];
+
+            // Preserve all previously checked checklist states
+            const previousPackedStates = checklistManager ? checklistManager.getAllStates() : {};
+
             // CLONE people safely: preserve ad-hoc custom items if any, but cleanly reset calculated inventory
             const peopleClone: Person[] = people.map(p => {
-                const existingCustomItems = Array.isArray(p.inventory)
-                    ? p.inventory.filter(item => item && item.id && item.id.startsWith('adhoc_'))
-                    : [];
-                const initialLoad = existingCustomItems.reduce(
+                const preservedAdhoc = adhocItemsByPerson[p.id] || [];
+                const initialLoad = preservedAdhoc.reduce(
                     (acc, item) => acc + ((item.weight || 0) * (item.quantity || 1)),
                     0
                 );
@@ -305,9 +320,10 @@ function App() {
                     id: p.id || generateId(),
                     name: (p.name || '').trim() || 'Reisende(r)',
                     type: p.type || 'ADULT',
-                    inventory: [...existingCustomItems],
+                    inventory: [...preservedAdhoc],
                     currentLoad: initialLoad,
                     maxLoad: p.maxLoad || maxWeight || 23000,
+                    luggageWeight: p.luggageWeight ?? 3500,
                     healthConditions: Array.isArray(p.healthConditions) ? [...p.healthConditions] : []
                 };
             });
@@ -324,13 +340,20 @@ function App() {
             };
 
             const res = engine.generateList(request);
+
+            // Re-attach community ad-hoc items if any
+            if (communityAdhoc.length > 0) {
+                res.communityBox.push(...communityAdhoc);
+            }
+
             setResult(res);
             setLastRequest(currentRequestStr);
 
-            // Initialize ChecklistManager with deterministic trip ID or active trip ID
-            const tripId = activeTripId || `${cleanDest.toLowerCase().replace(/\s+/g, '_')}_${date}_${days}_${(activities || []).slice().sort().join('-')}`;
+            // Initialize or update ChecklistManager with stable trip ID and restore checked states
+            const tripId = activeTripId || `trip_${cleanDest.toLowerCase().replace(/\s+/g, '_')}_${date}_${days}`;
             const manager = new ChecklistManager(tripId);
-            manager.load();
+            manager.setAllStates(previousPackedStates);
+            manager.save();
             setChecklistManager(manager);
             setPackedVersion(v => v + 1);
 
@@ -351,7 +374,7 @@ function App() {
                     weatherInfo: weatherInfoData,
                     lastUpdatedBy: userName,
                     updatedAt: new Date().toISOString()
-                }, userName).catch(err => {
+                }, userName, currentUser ? { uid: currentUser.uid, email: currentUser.email } : undefined).catch(err => {
                     console.error("Error auto-updating cloud trip after plan update:", err);
                 });
             }
@@ -765,6 +788,20 @@ function App() {
         setPackedVersion(v => v + 1);
     };
 
+    // Detect whether selected activities differ from the currently generated packing list
+    const hasActivitiesChanged = useMemo(() => {
+        if (!result) return false;
+        if (!lastRequest) return false;
+        try {
+            const parsed = JSON.parse(lastRequest);
+            const prevActs = Array.isArray(parsed.activities) ? parsed.activities.slice().sort().join(',') : '';
+            const currActs = (activities || []).slice().sort().join(',');
+            return prevActs !== currActs;
+        } catch {
+            return false;
+        }
+    }, [result, lastRequest, activities]);
+
     const filterItem = (ownerId: string, itemId: string) => {
         const packed = isItemPacked(ownerId, itemId);
         if (filter === 'PENDING') return !packed;
@@ -990,6 +1027,25 @@ function App() {
                             );
                         })}
                     </div>
+                    {hasActivitiesChanged && (
+                        <div className="mt-3 p-3 bg-indigo-950/70 border border-indigo-500/60 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-md">
+                            <div className="flex items-center gap-2.5 text-xs text-indigo-200">
+                                <span className="text-xl">💡</span>
+                                <div>
+                                    <strong className="block font-semibold text-white">Aktivitäten geändert!</strong>
+                                    <span>Klicke auf Aktualisieren, um Gegenstände für neue Aktivitäten hinzuzufügen bzw. abgewählte zu entfernen.</span>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow transition flex items-center justify-center gap-1.5 flex-shrink-0"
+                                onClick={handlePlan}
+                                disabled={loading}
+                            >
+                                <span>{loading ? 'Berechne...' : '🔄 Packliste jetzt aktualisieren'}</span>
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="form-group">
@@ -1109,8 +1165,16 @@ function App() {
                 </div>
 
                 <div className="wizard-actions">
-                    <button className="primary-btn" onClick={handlePlan} disabled={loading || !destination || people.length === 0}>
-                        {loading ? 'Berechne Packliste...' : '🚀 Packliste generieren'}
+                    <button
+                        className={`primary-btn ${hasActivitiesChanged ? 'ring-2 ring-indigo-400 font-bold' : ''}`}
+                        onClick={handlePlan}
+                        disabled={loading || !destination || people.length === 0}
+                    >
+                        {loading
+                            ? 'Berechne Packliste...'
+                            : (result
+                                ? (hasActivitiesChanged ? '🔄 Packliste mit geänderten Aktivitäten aktualisieren' : '🔄 Packliste neu berechnen')
+                                : '🚀 Packliste generieren')}
                     </button>
                     <button className="secondary" onClick={loadTestData}>
                         ✨ Testdaten laden (Island)
@@ -1121,11 +1185,44 @@ function App() {
             {result && (
                 <div className="result-container">
                     <div className="packing-dashboard">
+                        {hasActivitiesChanged && (
+                            <div className="mb-4 p-3.5 bg-amber-950/60 border border-amber-500/70 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-lg">
+                                <div className="flex items-center gap-2.5 text-xs text-amber-200">
+                                    <span className="text-xl">⚠️</span>
+                                    <div>
+                                        <strong className="block font-bold text-amber-100 text-sm">Aktivitäten wurden oben geändert!</strong>
+                                        <span className="text-amber-200/90">Die angezeigte Packliste entspricht noch nicht deiner neuen Aktivitätsauswahl ({activities.length} gewählt).</span>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-bold rounded-lg shadow-md transition flex items-center justify-center gap-2 flex-shrink-0"
+                                    onClick={handlePlan}
+                                    disabled={loading}
+                                >
+                                    <span>🔄</span>
+                                    <span>{loading ? 'Berechne...' : 'Packliste jetzt aktualisieren'}</span>
+                                </button>
+                            </div>
+                        )}
                         <div className="dashboard-header">
                             <div>
                                 <h2>📋 Interaktive Packliste</h2>
-                                <p className="dashboard-meta">
-                                    {destination} • {days} Tage • {people.length} Personen {activities.length > 0 && `• ${activities.length} Aktivitäten`}
+                                <p className="dashboard-meta flex flex-wrap items-center gap-1.5">
+                                    <span>{destination} • {days} Tage • {people.length} Personen</span>
+                                    {activities.length > 0 && (
+                                        <>
+                                            <span>•</span>
+                                            <span className="inline-flex items-center gap-1 font-medium text-slate-300">
+                                                {activities.map(id => (
+                                                    <span key={id} title={ACTIVITY_CATALOG[id as ActivityType]?.name}>
+                                                        {ACTIVITY_CATALOG[id as ActivityType]?.emoji}
+                                                    </span>
+                                                ))}
+                                                <span>({activities.length} Aktivitäten)</span>
+                                            </span>
+                                        </>
+                                    )}
                                 </p>
                             </div>
                             <div className="progress-badge">
