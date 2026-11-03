@@ -593,7 +593,56 @@ function App() {
                 weatherInfo,
                 lastUpdatedBy: userName,
                 updatedAt: new Date().toISOString()
-            }, userName).catch(console.error);
+            }, userName, currentUser ? { uid: currentUser.uid, email: currentUser.email } : undefined).catch(console.error);
+        }
+    };
+
+    // Remove a person completely from both wizard setup AND generated/loaded packing list
+    const handleRemovePerson = (personId: string) => {
+        // 1. Remove from configuration wizard list
+        const updatedPeople = people.filter(item => item.id !== personId);
+        setPeople(updatedPeople);
+
+        // 2. If packing list result is already generated/loaded, also remove the person from result.people!
+        if (result) {
+            const updatedResultPeople = (result.people || []).filter(p => p.id !== personId);
+            setResult({
+                ...result,
+                people: updatedResultPeople
+            });
+
+            // 3. Clean up checklist states for this person in checklistManager
+            if (checklistManager) {
+                const currentStates = checklistManager.getAllStates();
+                const prefix = `${personId}___`;
+                Object.keys(currentStates).forEach(key => {
+                    if (key.startsWith(prefix)) {
+                        delete currentStates[key];
+                    }
+                });
+                checklistManager.setAllStates(currentStates);
+                setPackedVersion(v => v + 1);
+            }
+
+            // 4. If trip is synced to Firestore, immediately update remote so collaborator devices remove the person too
+            if (activeTripId && activeShareCode) {
+                CollaborativeTripService.saveTrip({
+                    id: activeTripId,
+                    shareCode: activeShareCode,
+                    destination,
+                    date,
+                    days,
+                    mode,
+                    maxWeight,
+                    activities,
+                    people: updatedResultPeople,
+                    communityBox: result.communityBox,
+                    packedMap: checklistManager ? checklistManager.getAllStates() : {},
+                    weatherInfo,
+                    lastUpdatedBy: userName,
+                    updatedAt: new Date().toISOString()
+                }, userName, currentUser ? { uid: currentUser.uid, email: currentUser.email } : undefined).catch(console.error);
+            }
         }
     };
 
@@ -915,8 +964,8 @@ function App() {
                                 </select>
                                 <button
                                     className="danger-btn small-btn"
-                                    onClick={() => setPeople(people.filter(item => item.id !== p.id))}
-                                    title="Entfernen"
+                                    onClick={() => handleRemovePerson(p.id)}
+                                    title={`${p.name || 'Person'} entfernen`}
                                 >
                                     ✕
                                 </button>
@@ -1040,11 +1089,26 @@ function App() {
                                         <h3>{p.name}</h3>
                                         <span className="type-badge">{p.type}</span>
                                     </div>
-                                    <div className="card-progress">
-                                        <span className="count-text">{pStat.packed} / {pStat.total} gepackt ({pStat.percent}%)</span>
-                                        <div className="mini-progress-bar">
-                                            <div className="mini-progress-fill" style={{ width: `${pStat.percent}%` }} />
+                                    <div className="flex items-center gap-3">
+                                        <div className="card-progress">
+                                            <span className="count-text">{pStat.packed} / {pStat.total} gepackt ({pStat.percent}%)</span>
+                                            <div className="mini-progress-bar">
+                                                <div className="mini-progress-fill" style={{ width: `${pStat.percent}%` }} />
+                                            </div>
                                         </div>
+                                        <button
+                                            type="button"
+                                            className="px-2 py-1 text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/50 rounded-lg border border-red-200 dark:border-red-800 transition flex items-center gap-1"
+                                            onClick={() => {
+                                                if (window.confirm(`Möchtest du "${p.name}" und die gesamte zugehörige Packliste entfernen?`)) {
+                                                    handleRemovePerson(p.id);
+                                                }
+                                            }}
+                                            title={`Person "${p.name}" samt Packliste entfernen`}
+                                        >
+                                            <span>🗑️</span>
+                                            <span className="hidden sm:inline">Entfernen</span>
+                                        </button>
                                     </div>
                                 </div>
 
