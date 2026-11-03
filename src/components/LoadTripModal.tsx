@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { CloudDownload, Search, Clock, MapPin, Calendar, Users, X, ArrowRight, AlertCircle } from 'lucide-react';
+import { CloudDownload, Clock, MapPin, Calendar, Users, X, ArrowRight, AlertCircle, LogIn, Lock } from 'lucide-react';
 import { CollaborativeTripService, CollaborativeTripData } from '../services/CollaborativeTripService';
 
 export interface LoadTripModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSelectTrip: (trip: CollaborativeTripData) => void;
+    currentUser?: { uid: string; displayName?: string | null; email?: string | null } | null;
+    onLogin?: () => void;
 }
 
 export const LoadTripModal: React.FC<LoadTripModalProps> = ({
     isOpen,
     onClose,
-    onSelectTrip
+    onSelectTrip,
+    currentUser,
+    onLogin
 }) => {
     const [code, setCode] = useState('');
     const [recentTrips, setRecentTrips] = useState<CollaborativeTripData[]>([]);
@@ -25,15 +29,20 @@ export const LoadTripModal: React.FC<LoadTripModalProps> = ({
             setCode('');
             loadRecents();
         }
-    }, [isOpen]);
+    }, [isOpen, currentUser]);
 
     const loadRecents = async () => {
+        if (!currentUser) {
+            setRecentTrips([]);
+            return;
+        }
+
         setLoadingRecent(true);
         try {
-            const list = await CollaborativeTripService.listRecentTrips(6);
+            const list = await CollaborativeTripService.listRecentTrips(10, currentUser.uid);
             setRecentTrips(list);
         } catch (e) {
-            console.error(e);
+            console.error('Error loading recent trips:', e);
         } finally {
             setLoadingRecent(false);
         }
@@ -79,7 +88,7 @@ export const LoadTripModal: React.FC<LoadTripModalProps> = ({
 
                 <div className="load-trip-content">
                     <p className="text-sm text-gray-300 mb-4">
-                        Gib den <strong>Reise-Code</strong> ein (z. B. von deiner Frau per WhatsApp/Mail geschickt) oder wähle eine kürzlich gespeicherte Reise aus:
+                        Gib den <strong>Reise-Code</strong> ein (z. B. von Mitreisenden geteilt) oder wähle eine deiner gespeicherten Reisen aus:
                     </p>
 
                     {/* Search / Enter Code Input */}
@@ -116,20 +125,40 @@ export const LoadTripModal: React.FC<LoadTripModalProps> = ({
                         )}
                     </form>
 
-                    {/* Recent Trips List */}
+                    {/* Recent Trips Section */}
                     <div className="recent-trips-section">
                         <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-wider text-gray-400 font-semibold">
                             <Clock size={14} />
-                            <span>Zuletzt in der Cloud bearbeitete Reisen:</span>
+                            <span>Deine gespeicherten Reisen:</span>
                         </div>
 
-                        {loadingRecent ? (
+                        {!currentUser ? (
+                            <div className="p-4 text-center text-xs text-gray-300 bg-[#121216] rounded-lg border border-[#2a2b36] flex flex-col items-center gap-2">
+                                <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+                                    <Lock size={15} />
+                                    <span>Deine Reisen sind geschützt</span>
+                                </div>
+                                <p className="text-gray-400 max-w-sm">
+                                    Melde dich mit Google an, um deine eigenen Reisen in dieser Liste zu sehen und fremden Zugriff zu verhindern.
+                                </p>
+                                {onLogin && (
+                                    <button
+                                        type="button"
+                                        onClick={onLogin}
+                                        className="mt-1 flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium text-xs transition-colors"
+                                    >
+                                        <LogIn size={13} />
+                                        <span>Jetzt mit Google anmelden</span>
+                                    </button>
+                                )}
+                            </div>
+                        ) : loadingRecent ? (
                             <div className="text-center py-6 text-sm text-gray-400">
-                                Lade Reisen...
+                                Lade deine Reisen...
                             </div>
                         ) : recentTrips.length === 0 ? (
                             <div className="empty-trips-notice p-4 text-center text-xs text-gray-400 bg-[#121216] rounded-lg border border-[#2a2b36]">
-                                Noch keine Reisen in der Cloud gespeichert. Erstelle eine neue Reise und klicke auf „In Cloud speichern &amp; teilen“!
+                                Du hast noch keine Reisen in der Cloud gespeichert. Erstelle eine neue Reise und klicke auf „In Cloud speichern &amp; teilen“!
                             </div>
                         ) : (
                             <div className="recent-trips-grid">

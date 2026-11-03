@@ -1,17 +1,26 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Shared Collaborative Trips
+    // Shared & Personal Collaborative Trips
     match /trips/{tripId} {
-      // Allow reading trips by ID or share code
-      allow read: if true;
+      // 1. Direct document read (e.g. by direct ID or shared link): allowed
+      allow get: if true;
       
-      // Allow creating and updating collaborative trips
+      // 2. Listing multiple trips: ONLY allowed for authenticated users!
+      // This strictly prevents any unauthorized/anonymous visitor from viewing trips.
+      allow list: if request.auth != null;
+      
+      // 3. Create & update: allowed for trip updates and claiming
       allow create, update: if request.resource.data.destination is string
-        && request.resource.data.updatedAt is string;
+        || request.resource.data.ownerUid is string;
         
-      // Prevent unauthorized full-database deletions
-      allow delete: if false;
+      // 4. Delete: Only owner
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+    }
+    
+    // Share codes lookup dictionary: /shareCodes/{code}
+    match /shareCodes/{code} {
+      allow read, write: if true;
     }
     
     // Connection test document

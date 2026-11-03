@@ -5,10 +5,10 @@ import {
     onSnapshot,
     collection,
     query,
+    where,
     orderBy,
     limit,
-    getDocs,
-    serverTimestamp
+    getDocs
 } from 'firebase/firestore';
 import { db } from '../lib/firebaseClient';
 import { Person, Item } from '../logic/PackingEngine';
@@ -32,6 +32,8 @@ export interface CollaborativeTripData {
         location: string;
         date: string;
     } | null;
+    ownerUid?: string;
+    ownerEmail?: string;
     lastUpdatedBy: string;
     updatedAt: string;
     createdAt?: string;
@@ -55,15 +57,16 @@ export class CollaborativeTripService {
      */
     public static async saveTrip(
         trip: CollaborativeTripData,
-        authorName: string = 'Ich'
+        authorName: string = 'Ich',
+        ownerUser?: { uid: string; email?: string | null }
     ): Promise<string> {
         const tripId = trip.id || `trip_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        const shareCode = trip.shareCode || generateShareCode(trip.destination);
+        const shareCode = (trip.shareCode || generateShareCode(trip.destination)).toUpperCase();
         const docRef = doc(db, 'trips', tripId);
 
-        const payload = {
+        const payload: Record<string, any> = {
             id: tripId,
-            shareCode: shareCode.toUpperCase(),
+            shareCode: shareCode,
             destination: trip.destination,
             date: trip.date,
             days: trip.days,
@@ -74,12 +77,23 @@ export class CollaborativeTripService {
             communityBox: JSON.stringify(trip.communityBox || []),
             packedMap: JSON.stringify(trip.packedMap || {}),
             weatherInfo: trip.weatherInfo ? JSON.stringify(trip.weatherInfo) : '',
+            ownerUid: ownerUser?.uid || trip.ownerUid || null,
+            ownerEmail: ownerUser?.email || trip.ownerEmail || null,
             lastUpdatedBy: authorName,
             updatedAt: new Date().toISOString(),
             createdAt: trip.createdAt || new Date().toISOString()
         };
 
         await setDoc(docRef, payload, { merge: true });
+
+        // Save mapping for instant direct share code lookups
+        try {
+            const shareRef = doc(db, 'shareCodes', shareCode);
+            await setDoc(shareRef, { tripId, updatedAt: new Date().toISOString() }, { merge: true });
+        } catch (e) {
+            console.warn('Could not update shareCodes mapping:', e);
+        }
+
         return tripId;
     }
 
@@ -115,85 +129,125 @@ export class CollaborativeTripService {
     }
 
     /**
-     * Subscribes to real-time changes of a trip document (Live-Sync wie bei Google Notizen).
+     * Sets up a real-time snapshot listener on a trip document.
      */
     public static subscribeToTrip(
         tripId: string,
         onUpdate: (trip: CollaborativeTripData) => void,
-        onError?: (err: any) => void
+        onError?: (err: Error) => void
     ): () => void {
         const docRef = doc(db, 'trips', tripId);
-        return onSnapshot(docRef, (snap) => {
-            if (snap.exists()) {
-                const raw = snap.data();
+        return onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
                 try {
-                    const trip: CollaborativeTripData = {
-                        id: snap.id,
-                        shareCode: raw.shareCode || snap.id,
-                        destination: raw.destination || '',
-                        date: raw.date || '',
-                        days: raw.days || 3,
-                        mode: raw.mode || 'SHARED',
-                        maxWeight: raw.maxWeight || 23000,
-                        activities: raw.activities ? JSON.parse(raw.activities) : [],
-                        people: raw.people ? JSON.parse(raw.people) : [],
-                        communityBox: raw.communityBox ? JSON.parse(raw.communityBox) : [],
-                        packedMap: raw.packedMap ? JSON.parse(raw.packedMap) : {},
-                        weatherInfo: raw.weatherInfo ? JSON.parse(raw.weatherInfo) : null,
-                        lastUpdatedBy: raw.lastUpdatedBy || 'Jemand',
-                        updatedAt: raw.updatedAt || new Date().toISOString(),
-                        createdAt: raw.createdAt
-                    };
-                    onUpdate(trip);
+                    const parsed = this.parseDoc(docSnap.id, data);
+                    onUpdate(parsed);
                 } catch (e) {
-                    console.error('Error parsing synced trip data:', e);
+                    console.error('Failed to parse trip document updates:', e);
                 }
             }
         }, onError);
     }
 
     /**
-     * Finds a trip either by exact ID or by friendly share code (e.g. "MALLORCA123").
+     * Finds a trip either by exact ID or by friendly share code (e.g. "MALLORCA123" or "BARC588").
      */
     public static async loadTripByCodeOrId(codeOrId: string): Promise<CollaborativeTripData | null> {
         const clean = codeOrId.trim();
         if (!clean) return null;
 
         // 1. Try direct ID lookup
-        const directRef = doc(db, 'trips', clean);
-        const directSnap = await getDoc(directRef);
-        if (directSnap.exists()) {
-            return this.parseDoc(directSnap.id, directSnap.data());
+        try {
+            const directRef = doc(db, 'trips', clean);
+            const directSnap = await getDoc(directRef);
+            if (directSnap.exists()) {
+                return this.parseDoc(directSnap.id, directSnap.data());
+            }
+        } catch (e) {
+            console.warn('Direct trip ID read check:', e);
         }
 
-        // 2. Query by shareCode (case-insensitive uppercase match)
-        const tripsCol = collection(db, 'trips');
-        const q = query(tripsCol, orderBy('updatedAt', 'desc'), limit(50));
-        const querySnap = await getDocs(q);
         const targetCode = clean.toUpperCase();
 
-        for (const docSnap of querySnap.docs) {
-            const data = docSnap.data();
-            if (data.shareCode && data.shareCode.toUpperCase() === targetCode) {
-                return this.parseDoc(docSnap.id, data);
+        // 2. Lookup via /shareCodes/{code}
+        try {
+            const shareRef = doc(db, 'shareCodes', targetCode);
+            const shareSnap = await getDoc(shareRef);
+            if (shareSnap.exists()) {
+                const mapping = shareSnap.data();
+                if (mapping && mapping.tripId) {
+                    const resolvedRef = doc(db, 'trips', mapping.tripId);
+                    const resolvedSnap = await getDoc(resolvedRef);
+                    if (resolvedSnap.exists()) {
+                        return this.parseDoc(resolvedSnap.id, resolvedSnap.data());
+                    }
+                }
             }
+        } catch (e) {
+            console.warn('Share code mapping lookup error:', e);
+        }
+
+        // 3. Fallback: Query directly in /trips by shareCode field
+        try {
+            const tripsCol = collection(db, 'trips');
+            const q = query(tripsCol, where('shareCode', '==', targetCode), limit(1));
+            const querySnap = await getDocs(q);
+            if (!querySnap.empty) {
+                const docSnap = querySnap.docs[0];
+                return this.parseDoc(docSnap.id, docSnap.data());
+            }
+        } catch (e) {
+            console.warn('Direct shareCode query check:', e);
         }
 
         return null;
     }
 
     /**
-     * Lists recent trips for the current device/user.
+     * Lists recent trips for the authenticated user.
+     * Also seamlessly includes legacy trips (created before login) and automatically links them to the user.
      */
-    public static async listRecentTrips(limitCount: number = 10): Promise<CollaborativeTripData[]> {
+    public static async listRecentTrips(limitCount: number = 10, userUid?: string | null): Promise<CollaborativeTripData[]> {
+        if (!userUid) {
+            // Unauthenticated visitors see no trips
+            return [];
+        }
+
         try {
             const tripsCol = collection(db, 'trips');
-            const q = query(tripsCol, orderBy('updatedAt', 'desc'), limit(limitCount));
+            // Authenticated user can query recent trips
+            const q = query(tripsCol, orderBy('updatedAt', 'desc'), limit(30));
             const querySnap = await getDocs(q);
-            return querySnap.docs.map(d => this.parseDoc(d.id, d.data()));
+
+            const results: CollaborativeTripData[] = [];
+            for (const d of querySnap.docs) {
+                const data = d.data();
+                // Include trips owned by this user OR legacy trips without an owner
+                if (data.ownerUid === userUid || !data.ownerUid) {
+                    const parsed = this.parseDoc(d.id, data);
+                    results.push(parsed);
+
+                    // Automatically adopt/claim legacy trip so it gets permanently linked to this user
+                    if (!data.ownerUid) {
+                        setDoc(doc(db, 'trips', d.id), { ownerUid: userUid }, { merge: true }).catch(console.warn);
+                    }
+                }
+            }
+
+            return results.slice(0, limitCount);
         } catch (e) {
-            console.error('Failed to list recent trips:', e);
-            return [];
+            console.warn('Error in listRecentTrips, trying direct user query fallback:', e);
+            // Fallback: Query only where ownerUid == userUid
+            try {
+                const tripsCol = collection(db, 'trips');
+                const q = query(tripsCol, where('ownerUid', '==', userUid), limit(limitCount));
+                const querySnap = await getDocs(q);
+                return querySnap.docs.map(d => this.parseDoc(d.id, d.data()));
+            } catch (err2) {
+                console.error('Failed to list user trips in fallback:', err2);
+                return [];
+            }
         }
     }
 
@@ -211,6 +265,8 @@ export class CollaborativeTripService {
             communityBox: raw.communityBox ? JSON.parse(raw.communityBox) : [],
             packedMap: raw.packedMap ? JSON.parse(raw.packedMap) : {},
             weatherInfo: raw.weatherInfo ? JSON.parse(raw.weatherInfo) : null,
+            ownerUid: raw.ownerUid || undefined,
+            ownerEmail: raw.ownerEmail || undefined,
             lastUpdatedBy: raw.lastUpdatedBy || '',
             updatedAt: raw.updatedAt || new Date().toISOString(),
             createdAt: raw.createdAt
