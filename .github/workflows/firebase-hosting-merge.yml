@@ -18,3 +18,4 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0620240836 }}
           channelId: live
           projectId: gen-lang-client-0620240836
+          target: reisepacker

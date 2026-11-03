@@ -1,5 +1,14 @@
 {
   "projects": {
     "default": "gen-lang-client-0620240836"
+  },
+  "targets": {
+    "gen-lang-client-0620240836": {
+      "hosting": {
+        "reisepacker": [
+          "reisepacker"
+        ]
+      }
+    }
   }
 }

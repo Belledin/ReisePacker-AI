@@ -127,7 +127,7 @@ Die App ist anschließend lokal unter **`http://localhost:3000/`** erreichbar.
 
 Deployments erfolgen vollautomatisch über **GitHub Actions**:
 Jeder Push auf den `main`-Branch baut das Projekt (`npm run build`) und aktualisiert **Firebase Hosting** unter:
-👉 `https://gen-lang-client-0620240836.web.app/`
+👉 `https://reisepacker.web.app/`
 
 Manuelles Deployment über die CLI (falls nötig):
 ```bash
