@@ -264,7 +264,7 @@ export const CatalogManagerView: React.FC<CatalogManagerViewProps> = ({
                         return (
                             <div key={item.id} className={`catalog-card ${!item.enabled ? 'disabled' : ''}`}>
                                 <div className="catalog-card-header">
-                                    <div className="catalog-card-title">
+                                    <div className="catalog-card-title" title={item.name}>
                                         <span className="cat-icon">{catInfo.emoji}</span>
                                         <strong>{item.name}</strong>
                                     </div>

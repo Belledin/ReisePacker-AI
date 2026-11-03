@@ -1242,11 +1242,12 @@ function App() {
                                                     role="checkbox"
                                                     aria-checked={packed}
                                                     tabIndex={0}
+                                                    title={`${item.quantity}x ${item.name} (${(item.weight || 0) * (item.quantity || 1)}g)`}
                                                 >
                                                     <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
                                                     <span className="item-details">
-                                                        <span className="item-name">
-                                                            {item.quantity}x {item.name} {badge}{healthBadge}
+                                                        <span className="item-name" title={item.name}>
+                                                            <span className="item-qty-tag">{item.quantity}x</span> {item.name} {badge}{healthBadge}
                                                         </span>
                                                         <span className="item-weight">{(item.weight || 0) * (item.quantity || 1)}g</span>
                                                     </span>
@@ -1358,11 +1359,12 @@ function App() {
                                                 role="checkbox"
                                                 aria-checked={packed}
                                                 tabIndex={0}
+                                                title={`${item.quantity}x ${item.name} (${(item.weight || 0) * (item.quantity || 1)}g)`}
                                             >
                                                 <span className="checkbox-icon">{packed ? '✓' : '○'}</span>
                                                 <span className="item-details">
-                                                    <span className="item-name">
-                                                        {item.quantity}x {item.name} {badge}{healthBadge}
+                                                    <span className="item-name" title={item.name}>
+                                                        <span className="item-qty-tag">{item.quantity}x</span> {item.name} {badge}{healthBadge}
                                                     </span>
                                                     <span className="item-weight">{(item.weight || 0) * (item.quantity || 1)}g</span>
                                                 </span>
